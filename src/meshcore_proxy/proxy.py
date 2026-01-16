@@ -364,16 +364,8 @@ class MeshCoreProxy:
 
         self._radio_connection.set_reader(ReaderAdapter(self._handle_radio_rx))
 
-        disconnect_setter = getattr(self._radio_connection, "set_disconnect_handler", None)
-        if callable(disconnect_setter):
-            disconnect_setter(self._handle_radio_disconnect)
-        else:
-            callback_setter = getattr(self._radio_connection, "set_disconnect_callback", None)
-            if not callable(callback_setter):
-                raise AttributeError(
-                    "Radio connection object does not expose a disconnect handler setter"
-                )
-            callback_setter(self._handle_radio_disconnect)
+        # Set disconnect callback - both SerialConnection and BLEConnection use set_disconnect_callback
+        self._radio_connection.set_disconnect_callback(self._handle_radio_disconnect)
 
         # Connect
         result = await self._radio_connection.connect()

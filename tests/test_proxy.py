@@ -33,7 +33,7 @@ class MockRadio:
             raise ConnectionError("Not connected")
         self.send_buffer.append(data)
 
-    def set_disconnect_handler(self, handler):
+    def set_disconnect_callback(self, handler):
         self.on_disconnect = handler
 
     def set_reader(self, reader):
