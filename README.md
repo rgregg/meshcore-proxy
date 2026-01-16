@@ -56,7 +56,7 @@ docker build -t meshcore-proxy .
 
 ## Quick Start
 
-### 1. Start the Proxy
+### USB Serial
 
 ```bash
 # Linux
@@ -69,7 +69,20 @@ meshcore-proxy --serial /dev/cu.usbmodem101
 meshcore-proxy --serial COM3
 ```
 
-### 2. Connect a Client
+### Bluetooth LE
+
+```bash
+# Linux/Windows - use MAC address
+meshcore-proxy --ble 12:34:56:78:90:AB
+
+# macOS - use UUID or device name (MAC addresses not supported)
+meshcore-proxy --ble 7921236E-065C-0C7B-C04D-7F60E849DC47
+meshcore-proxy --ble MeshCore-07BA3987
+```
+
+### Connect a Client
+
+Once the proxy is running, connect clients to `localhost:5000`:
 
 ```bash
 meshcore-cli --tcp localhost:5000
@@ -82,7 +95,7 @@ meshcore-proxy [OPTIONS]
 
 Connection (one required):
   --serial PORT     Serial port path (e.g., /dev/ttyUSB0)
-  --ble MAC         BLE device MAC address
+  --ble ADDR        BLE device address (see platform notes below)
 
 Server options:
   --host ADDR       TCP bind address (default: 0.0.0.0)
@@ -101,6 +114,16 @@ Logging options:
   --json                   Output event logs as JSON
   --debug                  Enable debug logging
 ```
+
+### BLE Address Format by Platform
+
+| Platform | Address Format | Example |
+|----------|---------------|---------|
+| **Linux** | MAC address | `12:34:56:78:90:AB` |
+| **Windows** | MAC address | `12:34:56:78:90:AB` |
+| **macOS** | UUID or device name | `7921236E-065C-0C7B-C04D-7F60E849DC47` or `MeshCore-07BA3987` |
+
+macOS uses Core Bluetooth which does not expose MAC addresses. Use the device UUID (found via BLE scanning tools) or the device name broadcast by the radio.
 
 ## Event Logging
 
@@ -168,7 +191,9 @@ docker run -d \
   --serial /dev/cu.usbmodem101
 ```
 
-### Bluetooth LE
+### Bluetooth LE (Linux only)
+
+BLE in Docker requires Linux with BlueZ. It does not work on macOS or Windows Docker.
 
 ```bash
 # Requires host network and privileges for Bluetooth access
@@ -269,8 +294,9 @@ meshcore-proxy --serial /dev/ttyUSB0 --port 5001
 ### BLE connection fails
 
 - Ensure Bluetooth is enabled and the device is in range
-- Try specifying the PIN: `--ble-pin 123456`
-- On Linux, you may need to run with `sudo` or configure BlueZ permissions
+- **macOS**: Use UUID or device name, not MAC address
+- **Linux**: You may need `sudo` or add user to `bluetooth` group
+- **PIN-protected devices**: Pair at the OS level first (System Preferences on macOS, `bluetoothctl` on Linux), then the proxy will use the existing pairing
 
 ### Radio not responding
 
