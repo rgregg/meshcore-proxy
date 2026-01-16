@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import functools
 import logging
 import signal
 import sys
@@ -118,7 +119,7 @@ async def run_with_shutdown(proxy: MeshCoreProxy) -> None:
 
     # Register signal handlers for graceful shutdown
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
+        loop.add_signal_handler(sig, functools.partial(signal_handler, sig))
 
     # Create the proxy task
     proxy_task = asyncio.create_task(proxy.run())

@@ -57,7 +57,7 @@ async def test_sigterm_triggers_graceful_shutdown(mock_serial_connection):
     async def run_and_signal():
         """Run proxy and send SIGTERM after a short delay."""
         # Give the proxy time to start
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.2)
         # Send SIGTERM to trigger shutdown
         os.kill(os.getpid(), signal.SIGTERM)
 
@@ -93,7 +93,7 @@ async def test_sigint_triggers_graceful_shutdown(mock_serial_connection):
     # Start the proxy with signal handling
     async def run_and_signal():
         """Run proxy and send SIGINT after a short delay."""
-        await asyncio.sleep(1)
+        await asyncio.sleep(0.2)
         os.kill(os.getpid(), signal.SIGINT)
 
     # Run both tasks
