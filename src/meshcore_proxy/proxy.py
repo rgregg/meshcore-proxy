@@ -9,6 +9,8 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional
 
+from .decoder import decode_command, decode_response, format_decoded
+
 logger = logging.getLogger(__name__)
 
 # Try importing meshcore - first from installed package, then from submodule
@@ -151,9 +153,14 @@ class MeshCoreProxy:
         if direction == "TO_RADIO":
             # Commands going to the radio
             type_name = COMMAND_TYPE_NAMES.get(packet_type, f"CMD_UNKNOWN(0x{packet_type:02x})")
+            decoded = decode_command(packet_type, payload)
         else:
             # Responses coming from the radio
             type_name = RESPONSE_TYPE_NAMES.get(packet_type, f"RESP_UNKNOWN(0x{packet_type:02x})")
+            decoded = decode_response(packet_type, payload)
+
+        # Format decoded data
+        decoded_str = format_decoded(decoded) if decoded else ""
 
         if self.event_log_json:
             log_data = {
@@ -161,6 +168,8 @@ class MeshCoreProxy:
                 "packet_type": type_name,
                 "packet_type_raw": packet_type,
             }
+            if decoded:
+                log_data["decoded"] = decoded
             if self.event_log_level == EventLogLevel.VERBOSE:
                 log_data["payload_hex"] = payload.hex()
                 log_data["payload_len"] = len(payload)
@@ -168,9 +177,16 @@ class MeshCoreProxy:
         else:
             arrow = "->" if direction == "TO_RADIO" else "<-"
             if self.event_log_level == EventLogLevel.SUMMARY:
-                print(f"{arrow} {type_name}", flush=True)
+                if decoded_str:
+                    print(f"{arrow} {type_name}: {decoded_str}", flush=True)
+                else:
+                    print(f"{arrow} {type_name}", flush=True)
             else:  # VERBOSE
-                print(f"{arrow} {type_name} [{len(payload)} bytes]: {payload.hex()}", flush=True)
+                if decoded_str:
+                    print(f"{arrow} {type_name}: {decoded_str}", flush=True)
+                    print(f"   [{len(payload)} bytes]: {payload.hex()}", flush=True)
+                else:
+                    print(f"{arrow} {type_name} [{len(payload)} bytes]: {payload.hex()}", flush=True)
 
     def _frame_payload(self, payload: bytes) -> bytes:
         """Frame a payload for TCP transmission (0x3c + 2-byte size + payload)."""
