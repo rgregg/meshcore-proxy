@@ -10,6 +10,10 @@ import pytest
 from meshcore_proxy.cli import run_with_shutdown
 from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
 
+# Test timing constants
+STARTUP_DELAY = 0.2  # Time to wait for proxy to start before sending signal
+SHUTDOWN_TIMEOUT = 5  # Maximum time to wait for graceful shutdown
+
 
 class MockRadio:
     """Mock radio connection for testing."""
@@ -57,7 +61,7 @@ async def test_sigterm_triggers_graceful_shutdown(mock_serial_connection):
     async def run_and_signal():
         """Run proxy and send SIGTERM after a short delay."""
         # Give the proxy time to start
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(STARTUP_DELAY)
         # Send SIGTERM to trigger shutdown
         os.kill(os.getpid(), signal.SIGTERM)
 
@@ -67,7 +71,7 @@ async def test_sigterm_triggers_graceful_shutdown(mock_serial_connection):
 
     # Wait for shutdown with a timeout
     try:
-        await asyncio.wait_for(shutdown_task, timeout=5)
+        await asyncio.wait_for(shutdown_task, timeout=SHUTDOWN_TIMEOUT)
     except asyncio.TimeoutError:
         pytest.fail("Shutdown did not complete within timeout")
 
@@ -93,7 +97,7 @@ async def test_sigint_triggers_graceful_shutdown(mock_serial_connection):
     # Start the proxy with signal handling
     async def run_and_signal():
         """Run proxy and send SIGINT after a short delay."""
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(STARTUP_DELAY)
         os.kill(os.getpid(), signal.SIGINT)
 
     # Run both tasks
@@ -102,7 +106,7 @@ async def test_sigint_triggers_graceful_shutdown(mock_serial_connection):
 
     # Wait for shutdown with a timeout
     try:
-        await asyncio.wait_for(shutdown_task, timeout=5)
+        await asyncio.wait_for(shutdown_task, timeout=SHUTDOWN_TIMEOUT)
     except asyncio.TimeoutError:
         pytest.fail("Shutdown did not complete within timeout")
 
