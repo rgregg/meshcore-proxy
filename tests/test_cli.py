@@ -1,10 +1,12 @@
 """Tests for CLI signal handling."""
 
 import asyncio
+import os
 import signal
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
+
 from meshcore_proxy.cli import run_with_shutdown
 from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
 
@@ -57,8 +59,6 @@ async def test_sigterm_triggers_graceful_shutdown(mock_serial_connection):
         # Give the proxy time to start
         await asyncio.sleep(1)
         # Send SIGTERM to trigger shutdown
-        import os
-
         os.kill(os.getpid(), signal.SIGTERM)
 
     # Run both tasks
@@ -94,8 +94,6 @@ async def test_sigint_triggers_graceful_shutdown(mock_serial_connection):
     async def run_and_signal():
         """Run proxy and send SIGINT after a short delay."""
         await asyncio.sleep(1)
-        import os
-
         os.kill(os.getpid(), signal.SIGINT)
 
     # Run both tasks
