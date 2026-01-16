@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import logging
+import signal
 import sys
 
 from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
@@ -104,6 +105,48 @@ Examples:
     return parser.parse_args()
 
 
+async def run_with_shutdown(proxy: MeshCoreProxy) -> None:
+    """Run the proxy with proper signal handling for graceful shutdown."""
+    loop = asyncio.get_running_loop()
+    shutdown_event = asyncio.Event()
+
+    def signal_handler(sig):
+        """Handle shutdown signals."""
+        signame = signal.Signals(sig).name
+        logging.info(f"Received {signame}, shutting down gracefully...")
+        shutdown_event.set()
+
+    # Register signal handlers for graceful shutdown
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, lambda s=sig: signal_handler(s))
+
+    # Create the proxy task
+    proxy_task = asyncio.create_task(proxy.run())
+
+    # Wait for either the proxy to complete or a shutdown signal
+    shutdown_task = asyncio.create_task(shutdown_event.wait())
+    done, pending = await asyncio.wait(
+        [proxy_task, shutdown_task],
+        return_when=asyncio.FIRST_COMPLETED,
+    )
+
+    # If shutdown was signaled, cancel the proxy task
+    if shutdown_task in done:
+        proxy_task.cancel()
+        try:
+            await proxy_task
+        except asyncio.CancelledError:
+            pass
+
+    # Cancel any remaining tasks
+    for task in pending:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
 def main() -> int:
     """Main entry point."""
     args = parse_args()
@@ -144,17 +187,13 @@ def main() -> int:
         event_log_json=args.json,
     )
 
-    # Run
+    # Run with signal handling
     try:
-        asyncio.run(proxy.run())
-    except KeyboardInterrupt:
-        logging.info("Shutting down...")
+        asyncio.run(run_with_shutdown(proxy))
         return 0
     except Exception as e:
         logging.error(f"Fatal error: {e}")
         return 1
-
-    return 0
 
 
 if __name__ == "__main__":
