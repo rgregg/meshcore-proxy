@@ -1,6 +1,6 @@
 """MeshCore Proxy - TCP proxy for MeshCore companion radios."""
 
-from importlib.metadata import version, PackageNotFoundError
+from importlib.metadata import PackageNotFoundError, version
 
 try:
     __version__ = version("meshcore-proxy")

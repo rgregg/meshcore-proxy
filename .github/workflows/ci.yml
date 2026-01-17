@@ -58,6 +58,10 @@ jobs:
           python -m pip install --upgrade pip
           pip install build
 
+      - name: Set package version (tags only)
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: echo "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_MESHCORE_PROXY=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - name: Build packages
         run: python -m build
 
@@ -131,6 +135,9 @@ jobs:
             type=ref,event=tag
             type=raw,value=latest
 
+      - name: Set image version
+        run: echo "MESHCORE_PROXY_VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+
       - name: Build and push image
         uses: docker/build-push-action@v5
         with:
@@ -139,3 +146,5 @@ jobs:
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            MESHCORE_PROXY_VERSION=${{ env.MESHCORE_PROXY_VERSION }}
