@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "wheel", "setuptools-scm>=8.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "meshcore-proxy"
-version = "0.1.0"
+dynamic = ["version"]
 description = "TCP proxy for MeshCore companion radios"
 readme = "README.md"
 license = {text = "MIT"}
@@ -54,3 +54,10 @@ select = ["E", "F", "W", "I", "N", "UP", "B", "C4"]
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.setuptools_scm]
+# Use guess-next-dev for versions between tags
+# On a tagged commit, this will use the exact tag version
+version_scheme = "guess-next-dev"
+local_scheme = "no-local-version"
+tag_regex = "^v(?P<version>[0-9]+\\.[0-9]+\\.[0-9]+(-alpha|-beta|-rc[0-9]+)?)$"
