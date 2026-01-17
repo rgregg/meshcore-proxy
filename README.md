@@ -313,6 +313,45 @@ meshcore-proxy --serial /dev/ttyUSB0 --port 5001
 - Python 3.10+
 - MeshCore companion radio with USB or BLE firmware
 
+## Development
+
+### Building from Source
+
+```bash
+git clone --recursive https://github.com/rgregg/meshcore-proxy.git
+cd meshcore-proxy
+pip install -e ".[dev]"
+```
+
+### Running Tests
+
+```bash
+pytest
+```
+
+### Creating a Release
+
+This project uses [setuptools-scm](https://github.com/pypa/setuptools-scm) for automatic versioning based on git tags.
+
+**Version format:** Tags should follow the pattern `vX.Y.Z` or `vX.Y.Z-alpha` (e.g., `v0.4.0`, `v0.4.0-alpha`)
+
+**Release process:**
+
+1. Ensure all changes are committed and pushed
+2. Create and push a version tag:
+   ```bash
+   git tag v0.4.0-alpha
+   git push origin v0.4.0-alpha
+   ```
+3. GitHub Actions will automatically:
+   - Build the package with the version from the tag
+   - Publish to PyPI
+   - Build and publish Docker images to GHCR
+
+**Version resolution:**
+- On a tagged commit: uses the exact tag version (e.g., `v0.4.0-alpha` → `0.4.0a0`)
+- Between tags: uses a dev version (e.g., `0.4.0a1.dev2` for 2 commits after `v0.4.0-alpha`)
+
 ## License
 
 MIT
