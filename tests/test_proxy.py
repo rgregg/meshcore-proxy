@@ -304,3 +304,112 @@ def test_parse_tcp_frame_rejects_invalid_header():
 
     result = proxy._parse_tcp_frame(client, bad_frame)
     assert result == [], "Frame with wrong direction byte should be discarded"
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_virtualized_channels_rewrite_set_channel(mock_serial_connection):
+    """
+    Tests that with virtualize_channels enabled, SET_CHANNEL commands get
+    rewritten with physical slot indices.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5020,
+        virtualize_channels=True,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Connect TCP client and send SET_CHANNEL
+    reader, writer = await asyncio.open_connection("127.0.0.1", 5020)
+
+    # Build SET_CHANNEL(virtual_idx=5, "TestChannel")
+    from hashlib import sha256
+    name = "TestChannel"
+    name_bytes = name.encode("utf-8")[:32].ljust(32, b"\x00")
+    secret = sha256(name.encode("utf-8")).digest()[:16]
+    payload = b"\x20\x05" + name_bytes + secret
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    writer.write(frame)
+    await writer.drain()
+    await asyncio.sleep(0.5)
+
+    # Radio should receive SET_CHANNEL with a physical index (not necessarily 5)
+    assert len(mock_radio.send_buffer) == 1
+    sent = mock_radio.send_buffer[0]
+    assert sent[0] == 0x20, "Command type preserved"
+    assert sent[2:] == payload[2:], "Config bytes preserved"
+    physical_idx = sent[1]
+    assert 0 <= physical_idx < 40
+
+    writer.close()
+    await writer.wait_closed()
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_virtualized_channels_dedup_suppresses_radio_command(mock_serial_connection):
+    """
+    Tests that duplicate SET_CHANNEL from a second client is suppressed
+    (not sent to radio).
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5021,
+        virtualize_channels=True,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Build the same SET_CHANNEL payload for both clients
+    from hashlib import sha256
+    name = "SharedChannel"
+    name_bytes = name.encode("utf-8")[:32].ljust(32, b"\x00")
+    secret = sha256(name.encode("utf-8")).digest()[:16]
+    payload = b"\x20\x00" + name_bytes + secret
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    # Client A sends SET_CHANNEL
+    reader_a, writer_a = await asyncio.open_connection("127.0.0.1", 5021)
+    writer_a.write(frame)
+    await writer_a.drain()
+    await asyncio.sleep(0.5)
+    assert len(mock_radio.send_buffer) == 1, "First SET_CHANNEL sent to radio"
+
+    # Client B sends identical SET_CHANNEL
+    reader_b, writer_b = await asyncio.open_connection("127.0.0.1", 5021)
+    writer_b.write(frame)
+    await writer_b.drain()
+    await asyncio.sleep(0.5)
+    assert len(mock_radio.send_buffer) == 1, "Dedup: second SET_CHANNEL NOT sent to radio"
+
+    writer_a.close()
+    writer_b.close()
+    await writer_a.wait_closed()
+    await writer_b.wait_closed()
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass

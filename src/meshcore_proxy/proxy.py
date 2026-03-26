@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional
 
+from .channel_virtualizer import ChannelSlotAllocator
 from .decoder import decode_command, decode_response, format_decoded
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class MeshCoreProxy:
         tcp_port: int = 5000,
         event_log_level: EventLogLevel = EventLogLevel.OFF,
         event_log_json: bool = False,
+        virtualize_channels: bool = False,
     ):
         self.serial_port = serial_port
         self.ble_address = ble_address
@@ -133,6 +135,11 @@ class MeshCoreProxy:
         self.tcp_port = tcp_port
         self.event_log_level = event_log_level
         self.event_log_json = event_log_json
+        self.virtualize_channels = virtualize_channels
+        self._channel_allocator: Optional[ChannelSlotAllocator] = None
+        if virtualize_channels:
+            self._channel_allocator = ChannelSlotAllocator()
+            logger.info("Channel slot virtualization enabled")
 
         self._radio_connection: Optional[SerialConnection | BLEConnection] = None
         self._tcp_server: Optional[asyncio.Server] = None
@@ -216,11 +223,17 @@ class MeshCoreProxy:
         self._log_event("FROM_RADIO", packet_type, payload)
 
         # Frame and forward to all TCP clients
-        framed = self._frame_payload(payload)
         disconnected = []
 
         for addr, client in self._clients.items():
             try:
+                # Rewrite channel indices per-client if virtualization enabled
+                client_payload = payload
+                if self._channel_allocator:
+                    client_payload = self._channel_allocator.process_incoming(
+                        addr, payload
+                    )
+                framed = self._frame_payload(client_payload)
                 client.writer.write(framed)
                 await client.writer.drain()
             except Exception as e:
@@ -327,6 +340,8 @@ class MeshCoreProxy:
         """Remove a client and close its connection."""
         if addr in self._clients:
             client = self._clients.pop(addr)
+            if self._channel_allocator:
+                self._channel_allocator.remove_client(addr)
             try:
                 client.writer.close()
                 await client.writer.wait_closed()
@@ -357,6 +372,17 @@ class MeshCoreProxy:
 
                 # Enqueue each complete payload for serialized sending
                 for payload in payloads:
+                    # Apply channel virtualization if enabled
+                    if self._channel_allocator:
+                        payload = self._channel_allocator.process_outgoing(
+                            addr, payload
+                        )
+                        if payload is None:
+                            logger.debug(
+                                f"SET_CHANNEL from {addr} suppressed (dedup hit)"
+                            )
+                            continue
+
                     logger.debug(
                         f"Command enqueued from {addr} "
                         f"(queue depth: {self._command_queue.qsize()})"
