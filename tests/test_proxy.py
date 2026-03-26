@@ -132,3 +132,44 @@ async def test_backoff_delay(mock_serial_connection):
         await proxy_task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_commands_serialized_through_queue(mock_serial_connection):
+    """
+    Tests that commands from multiple clients are serialized through the queue
+    and arrive at the radio one at a time in FIFO order.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5010,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Enqueue three commands
+    payload_a = b"\x01"  # CMD_APPSTART
+    payload_b = b"\x14"  # CMD_GET_BATTERY
+    payload_c = b"\x05"  # CMD_GET_TIME
+
+    await proxy._command_queue.put(payload_a)
+    await proxy._command_queue.put(payload_b)
+    await proxy._command_queue.put(payload_c)
+
+    # Give the worker time to process
+    await asyncio.sleep(0.5)
+
+    assert mock_radio.send_buffer == [payload_a, payload_b, payload_c]
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass

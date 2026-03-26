@@ -140,6 +140,8 @@ class MeshCoreProxy:
         self._is_ble = False
         self._is_running = False
         self._radio_connected = False
+        self._command_queue: asyncio.Queue = asyncio.Queue()
+        self._queue_worker_task: Optional[asyncio.Task] = None
 
     async def _handle_radio_disconnect(self, reason: Optional[str] = None) -> None:
         """Handle radio disconnection."""
@@ -248,6 +250,27 @@ class MeshCoreProxy:
         except Exception as e:
             logger.error(f"Failed to send to radio: {e}")
             await self._handle_radio_disconnect()
+
+    async def _run_command_queue(self) -> None:
+        """Worker that pulls commands from the queue and sends them to the radio."""
+        while True:
+            payload = await self._command_queue.get()
+            try:
+                if not self._radio_connected:
+                    logger.warning(
+                        "Command dropped: radio not connected "
+                        f"(queue depth: {self._command_queue.qsize()})"
+                    )
+                    continue
+                logger.debug(
+                    f"Sending queued command "
+                    f"(queue depth: {self._command_queue.qsize()})"
+                )
+                await self._send_to_radio(payload)
+            except Exception as e:
+                logger.error(f"Queue worker error: {e}")
+            finally:
+                self._command_queue.task_done()
 
     def _parse_tcp_frame(self, client: TCPClient, data: bytes) -> list[bytes]:
         """
@@ -393,6 +416,7 @@ class MeshCoreProxy:
         logger.info(f"Starting MeshCore Proxy ({conn_type}: {conn_target})...")
 
         await self._start_tcp_server()
+        self._queue_worker_task = asyncio.create_task(self._run_command_queue())
 
         reconnect_delay = 5  # Initial delay in seconds
         max_delay = 300  # 5 minutes
@@ -424,6 +448,26 @@ class MeshCoreProxy:
 
         logger.info("Stopping MeshCore Proxy...")
         self._is_running = False
+
+        # Cancel queue worker
+        if self._queue_worker_task:
+            self._queue_worker_task.cancel()
+            try:
+                await self._queue_worker_task
+            except asyncio.CancelledError:
+                pass
+
+        # Discard remaining queued commands
+        remaining = 0
+        while not self._command_queue.empty():
+            try:
+                self._command_queue.get_nowait()
+                self._command_queue.task_done()
+                remaining += 1
+            except asyncio.QueueEmpty:
+                break
+        if remaining:
+            logger.warning(f"Discarded {remaining} queued commands on shutdown")
 
         # Close all clients
         for addr in list(self._clients.keys()):
