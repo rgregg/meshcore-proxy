@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import functools
 import logging
+import os
 import signal
 import sys
 
@@ -31,83 +32,95 @@ Examples:
     )
 
     # Connection type (mutually exclusive)
-    conn_group = parser.add_mutually_exclusive_group(required=True)
+    # Allow env vars so docker-compose can configure without modifying command
+    conn_group = parser.add_mutually_exclusive_group(
+        required=not (os.environ.get("SERIAL_PORT") or os.environ.get("BLE_ADDRESS")),
+    )
     conn_group.add_argument(
         "--serial",
         metavar="PORT",
-        help="Serial port path (e.g., /dev/ttyUSB0)",
+        default=os.environ.get("SERIAL_PORT"),
+        help="Serial port path (e.g., /dev/ttyUSB0) [env: SERIAL_PORT]",
     )
     conn_group.add_argument(
         "--ble",
         metavar="MAC",
-        help="BLE device MAC address (e.g., 12:34:56:78:90:AB)",
+        default=os.environ.get("BLE_ADDRESS"),
+        help="BLE device MAC address (e.g., 12:34:56:78:90:AB) [env: BLE_ADDRESS]",
     )
 
     # TCP server options
     parser.add_argument(
         "--host",
-        default="0.0.0.0",
-        help="TCP server bind address (default: 0.0.0.0)",
+        default=os.environ.get("TCP_HOST", "0.0.0.0"),
+        help="TCP server bind address (default: 0.0.0.0) [env: TCP_HOST]",
     )
     parser.add_argument(
         "--port",
         type=int,
-        default=5000,
-        help="TCP server port (default: 5000)",
+        default=int(os.environ.get("TCP_PORT", "5000")),
+        help="TCP server port (default: 5000) [env: TCP_PORT]",
     )
 
     # Serial options
     parser.add_argument(
         "--baud",
         type=int,
-        default=115200,
-        help="Serial baud rate (default: 115200)",
+        default=int(os.environ.get("BAUD_RATE", "115200")),
+        help="Serial baud rate (default: 115200) [env: BAUD_RATE]",
     )
 
     # BLE options
     parser.add_argument(
         "--ble-pin",
-        default="123456",
-        help="BLE pairing PIN (default: 123456)",
+        default=os.environ.get("BLE_PIN", "123456"),
+        help="BLE pairing PIN (default: 123456) [env: BLE_PIN]",
     )
 
     # Event logging options (mutually exclusive)
+    # LOG_LEVEL env var: "off", "summary", "verbose"
     log_group = parser.add_mutually_exclusive_group()
     log_group.add_argument(
         "--quiet",
         action="store_true",
-        help="Suppress non-error output",
+        default=os.environ.get("LOG_LEVEL", "").lower() == "off",
+        help="Suppress non-error output [env: LOG_LEVEL=off]",
     )
     log_group.add_argument(
         "--log-events",
         action="store_true",
-        help="Log event summaries (type, direction, basic info)",
+        default=os.environ.get("LOG_LEVEL", "").lower() == "summary",
+        help="Log event summaries (type, direction, basic info) [env: LOG_LEVEL=summary]",
     )
     log_group.add_argument(
         "--log-events-verbose",
         action="store_true",
-        help="Log full decoded event details",
+        default=os.environ.get("LOG_LEVEL", "").lower() == "verbose",
+        help="Log full decoded event details [env: LOG_LEVEL=verbose]",
     )
 
     # Output format
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Output event logs as JSON (for parsing)",
+        default=os.environ.get("LOG_JSON", "").lower() in ("1", "true", "yes"),
+        help="Output event logs as JSON (for parsing) [env: LOG_JSON]",
     )
 
     # Debug logging
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Enable debug logging",
+        default=os.environ.get("DEBUG", "").lower() in ("1", "true", "yes"),
+        help="Enable debug logging [env: DEBUG]",
     )
 
     # Channel virtualization
     parser.add_argument(
         "--virtualize-channels",
         action="store_true",
-        help="Virtualize channel slots for multi-client isolation (recommended when multiple clients share channels)",
+        default=os.environ.get("VIRTUALIZE_CHANNELS", "").lower() in ("1", "true", "yes"),
+        help="Virtualize channel slots for multi-client isolation [env: VIRTUALIZE_CHANNELS]",
     )
 
     return parser.parse_args()
