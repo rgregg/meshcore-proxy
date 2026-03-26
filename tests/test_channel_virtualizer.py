@@ -332,3 +332,83 @@ def test_empty_payload_passes_through():
 
     result = alloc.process_incoming(addr, b"")
     assert result == b""
+
+
+# --- Task 8: End-to-End Multi-Client Scenario Tests ---
+
+
+def test_full_scenario_from_spec():
+    """
+    End-to-end test matching the example scenario in the design spec:
+    Two clients, dedup, reassignment, disconnect.
+    """
+    alloc = ChannelSlotAllocator(max_slots=40)
+    addr_a = ("127.0.0.1", 9000)
+    addr_b = ("127.0.0.1", 9001)
+
+    from hashlib import sha256
+    secret_w = sha256("Weather".encode()).digest()[:16]
+    secret_n = sha256("News".encode()).digest()[:16]
+
+    # 1. Client A: SET_CHANNEL(virtual=0, "Weather")
+    result = alloc.process_outgoing(addr_a, _make_set_channel_payload(0, "Weather"))
+    assert result is not None
+    phys_weather = result[1]
+
+    # 2. Client B: SET_CHANNEL(virtual=0, "Weather") - dedup
+    result = alloc.process_outgoing(addr_b, _make_set_channel_payload(0, "Weather"))
+    assert result is None, "Dedup hit"
+    assert alloc._virtual_to_physical[(addr_b, 0)] == phys_weather
+
+    # 3. Client A: SEND_CHAN_MSG(chan=0, "storm warning")
+    msg_a = _make_send_chan_msg_payload(0, "storm warning")
+    result = alloc.process_outgoing(addr_a, msg_a)
+    assert result[2] == phys_weather
+
+    # 4. Client B: SET_CHANNEL(virtual=0, "News") - reassignment
+    result = alloc.process_outgoing(addr_b, _make_set_channel_payload(0, "News"))
+    assert result is not None
+    phys_news = result[1]
+    assert phys_news != phys_weather
+    # Weather slot still alive (Client A)
+    assert phys_weather in alloc._physical_slots
+
+    # 5. Client B: SEND_CHAN_MSG(chan=0, "headlines")
+    msg_b = _make_send_chan_msg_payload(0, "headlines")
+    result = alloc.process_outgoing(addr_b, msg_b)
+    assert result[2] == phys_news
+
+    # 6. Client A disconnects
+    alloc.remove_client(addr_a)
+    assert phys_weather not in alloc._physical_slots, "Weather slot released"
+    assert phys_news in alloc._physical_slots, "News slot survives"
+
+    # 7. Client B disconnects
+    alloc.remove_client(addr_b)
+    assert len(alloc._physical_slots) == 0
+    assert len(alloc._available_slots) == 40
+
+
+def test_remote_terminal_cycling_pattern():
+    """
+    Test the Remote-Terminal pattern: one client cycling through many channels
+    on a single virtual slot. Should only consume one physical slot at a time.
+    """
+    alloc = ChannelSlotAllocator(max_slots=40)
+    addr = ("127.0.0.1", 9000)
+
+    for i in range(100):
+        name = f"Channel{i}"
+        payload = _make_set_channel_payload(0, name)
+        result = alloc.process_outgoing(addr, payload)
+        assert result is not None, f"Channel {i} should allocate"
+
+        # Only 1 physical slot should be in use at any time
+        assert len(alloc._physical_slots) == 1, (
+            f"Iteration {i}: expected 1 physical slot, got {len(alloc._physical_slots)}"
+        )
+
+        # Send a message on it
+        msg = _make_send_chan_msg_payload(0, f"msg{i}")
+        result = alloc.process_outgoing(addr, msg)
+        assert result is not None
