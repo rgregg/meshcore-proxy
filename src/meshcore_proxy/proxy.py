@@ -291,6 +291,14 @@ class MeshCoreProxy:
                 header_needed = 3 - len(client.header)
                 if len(remaining) >= header_needed:
                     client.header = client.header + remaining[:header_needed]
+                    if client.header[0:1] != b"\x3c":
+                        logger.warning(
+                            f"Invalid frame header from {client.addr}: "
+                            f"expected 0x3c, got 0x{client.header[0]:02x}"
+                        )
+                        client.header = b""
+                        offset += header_needed
+                        continue
                     client.frame_started = True
                     client.frame_size = int.from_bytes(client.header[1:], byteorder="little")
                     offset += header_needed

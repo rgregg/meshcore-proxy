@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
+from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy, TCPClient
 
 
 class MockRadio:
@@ -275,3 +275,32 @@ def test_frame_payload_uses_server_direction_byte():
     assert framed[0:1] == b"\x3e", "Direction byte should be 0x3E (server -> client)"
     assert framed[1:3] == len(payload).to_bytes(2, byteorder="little"), "Size should be little-endian"
     assert framed[3:] == payload, "Payload should follow header unchanged"
+
+
+def test_parse_tcp_frame_accepts_valid_header():
+    """
+    Tests that _parse_tcp_frame accepts frames with 0x3C direction byte.
+    """
+    proxy = MeshCoreProxy(serial_port="/dev/ttyUSB0")
+    client = TCPClient(reader=None, writer=None, addr=("127.0.0.1", 9999))
+
+    payload = b"\x01\x02\x03"
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    result = proxy._parse_tcp_frame(client, frame)
+    assert result == [payload]
+
+
+def test_parse_tcp_frame_rejects_invalid_header():
+    """
+    Tests that _parse_tcp_frame discards frames with wrong direction byte.
+    """
+    proxy = MeshCoreProxy(serial_port="/dev/ttyUSB0")
+    client = TCPClient(reader=None, writer=None, addr=("127.0.0.1", 9999))
+
+    payload = b"\x01\x02\x03"
+    # Use 0x3E (server -> client) instead of 0x3C (client -> server)
+    bad_frame = b"\x3e" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    result = proxy._parse_tcp_frame(client, bad_frame)
+    assert result == [], "Frame with wrong direction byte should be discarded"
