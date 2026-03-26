@@ -103,6 +103,13 @@ Examples:
         help="Enable debug logging",
     )
 
+    # Channel virtualization
+    parser.add_argument(
+        "--virtualize-channels",
+        action="store_true",
+        help="Virtualize channel slots for multi-client isolation (recommended when multiple clients share channels)",
+    )
+
     return parser.parse_args()
 
 
@@ -186,6 +193,7 @@ def main() -> int:
         tcp_port=args.port,
         event_log_level=event_log_level,
         event_log_json=args.json,
+        virtualize_channels=args.virtualize_channels,
     )
 
     # Run with signal handling
