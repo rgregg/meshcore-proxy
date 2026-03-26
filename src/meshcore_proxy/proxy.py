@@ -345,9 +345,13 @@ class MeshCoreProxy:
                 # Parse frames from the TCP data
                 payloads = self._parse_tcp_frame(client, data)
 
-                # Forward each complete payload to the radio
+                # Enqueue each complete payload for serialized sending
                 for payload in payloads:
-                    await self._send_to_radio(payload)
+                    logger.debug(
+                        f"Command enqueued from {addr} "
+                        f"(queue depth: {self._command_queue.qsize()})"
+                    )
+                    await self._command_queue.put(payload)
 
         except asyncio.CancelledError:
             pass

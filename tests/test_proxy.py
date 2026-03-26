@@ -173,3 +173,47 @@ async def test_commands_serialized_through_queue(mock_serial_connection):
         await proxy_task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_tcp_client_commands_go_through_queue(mock_serial_connection):
+    """
+    Tests that commands received from a TCP client are routed through the
+    command queue rather than sent directly to the radio.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5011,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Connect a TCP client and send a framed command
+    reader, writer = await asyncio.open_connection("127.0.0.1", 5011)
+
+    # Send a framed CMD_APPSTART: 0x3c + 2-byte size (1, little-endian) + payload
+    payload = b"\x01"
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+    writer.write(frame)
+    await writer.drain()
+
+    # Give time for processing
+    await asyncio.sleep(0.5)
+
+    assert mock_radio.send_buffer == [payload]
+
+    writer.close()
+    await writer.wait_closed()
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
