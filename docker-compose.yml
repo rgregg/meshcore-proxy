@@ -3,6 +3,15 @@
 # Usage:
 #   USB Serial: docker compose --profile serial up
 #   BLE:        docker compose --profile ble up
+#
+# Environment variables (can be set in .env file or shell):
+#   SERIAL_PORT        - Serial port path (default: /dev/ttyUSB0)
+#   BLE_ADDRESS        - BLE device MAC address
+#   TCP_PORT           - TCP server port (default: 5000)
+#   BLE_PIN            - BLE pairing PIN (default: 123456)
+#   LOG_LEVEL          - Log verbosity: off, error, warning, info, debug, verbose (default: info)
+#   LOG_JSON           - Output logs as JSON: true/false
+#   VIRTUALIZE_CHANNELS - Enable channel slot virtualization: true/false
 
 services:
   # USB Serial connection profile
@@ -10,10 +19,15 @@ services:
     image: ghcr.io/rgregg/meshcore-proxy:latest
     profiles: ["serial"]
     ports:
-      - "5000:5000"
+      - "${TCP_PORT:-5000}:${TCP_PORT:-5000}"
     devices:
-      - "/dev/ttyUSB0:/dev/ttyUSB0"
-    command: ["--serial", "/dev/ttyUSB0", "--port", "5000"]
+      - "${SERIAL_PORT:-/dev/ttyUSB0}:${SERIAL_PORT:-/dev/ttyUSB0}"
+    environment:
+      - SERIAL_PORT=${SERIAL_PORT:-/dev/ttyUSB0}
+      - TCP_PORT=${TCP_PORT:-5000}
+      - VIRTUALIZE_CHANNELS=${VIRTUALIZE_CHANNELS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-}
+      - LOG_JSON=${LOG_JSON:-}
     restart: unless-stopped
 
   # BLE connection profile (requires host network for Bluetooth)
@@ -26,5 +40,9 @@ services:
       - /var/run/dbus:/var/run/dbus:ro
     environment:
       - BLE_ADDRESS=${BLE_ADDRESS:-}
-    command: ["--ble", "${BLE_ADDRESS}", "--port", "5000"]  # don't need to expose PORT because of host networking
+      - BLE_PIN=${BLE_PIN:-123456}
+      - TCP_PORT=${TCP_PORT:-5000}
+      - VIRTUALIZE_CHANNELS=${VIRTUALIZE_CHANNELS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-}
+      - LOG_JSON=${LOG_JSON:-}
     restart: unless-stopped

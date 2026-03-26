@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Callable, Optional
 
+from .channel_virtualizer import ChannelSlotAllocator
 from .decoder import decode_command, decode_response, format_decoded
 
 logger = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class MeshCoreProxy:
         tcp_port: int = 5000,
         event_log_level: EventLogLevel = EventLogLevel.OFF,
         event_log_json: bool = False,
+        virtualize_channels: bool = False,
     ):
         self.serial_port = serial_port
         self.ble_address = ble_address
@@ -133,6 +135,11 @@ class MeshCoreProxy:
         self.tcp_port = tcp_port
         self.event_log_level = event_log_level
         self.event_log_json = event_log_json
+        self.virtualize_channels = virtualize_channels
+        self._channel_allocator: Optional[ChannelSlotAllocator] = None
+        if virtualize_channels:
+            self._channel_allocator = ChannelSlotAllocator()
+            logger.info("Channel slot virtualization enabled")
 
         self._radio_connection: Optional[SerialConnection | BLEConnection] = None
         self._tcp_server: Optional[asyncio.Server] = None
@@ -140,6 +147,8 @@ class MeshCoreProxy:
         self._is_ble = False
         self._is_running = False
         self._radio_connected = False
+        self._command_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
+        self._queue_worker_task: Optional[asyncio.Task] = None
 
     async def _handle_radio_disconnect(self, reason: Optional[str] = None) -> None:
         """Handle radio disconnection."""
@@ -214,11 +223,17 @@ class MeshCoreProxy:
         self._log_event("FROM_RADIO", packet_type, payload)
 
         # Frame and forward to all TCP clients
-        framed = self._frame_payload(payload)
         disconnected = []
 
         for addr, client in self._clients.items():
             try:
+                # Rewrite channel indices per-client if virtualization enabled
+                client_payload = payload
+                if self._channel_allocator:
+                    client_payload = self._channel_allocator.process_incoming(
+                        addr, payload
+                    )
+                framed = self._frame_payload(client_payload)
                 client.writer.write(framed)
                 await client.writer.drain()
             except Exception as e:
@@ -249,6 +264,29 @@ class MeshCoreProxy:
             logger.error(f"Failed to send to radio: {e}")
             await self._handle_radio_disconnect()
 
+    async def _run_command_queue(self) -> None:
+        """Worker that pulls commands from the queue and sends them to the radio."""
+        while True:
+            payload = await self._command_queue.get()
+            try:
+                if not self._radio_connected:
+                    logger.warning(
+                        "Command dropped: radio not connected "
+                        f"(queue depth: {self._command_queue.qsize()})"
+                    )
+                    continue
+                logger.debug(
+                    f"Sending queued command "
+                    f"(queue depth: {self._command_queue.qsize()})"
+                )
+                await self._send_to_radio(payload)
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                logger.error(f"Queue worker error: {e}")
+            finally:
+                self._command_queue.task_done()
+
     def _parse_tcp_frame(self, client: TCPClient, data: bytes) -> list[bytes]:
         """
         Parse incoming TCP data into complete frames.
@@ -266,6 +304,14 @@ class MeshCoreProxy:
                 header_needed = 3 - len(client.header)
                 if len(remaining) >= header_needed:
                     client.header = client.header + remaining[:header_needed]
+                    if client.header[0:1] != b"\x3c":
+                        logger.warning(
+                            f"Invalid frame header from {client.addr}: "
+                            f"expected 0x3c, got 0x{client.header[0]:02x}"
+                        )
+                        client.header = b""
+                        offset += header_needed
+                        continue
                     client.frame_started = True
                     client.frame_size = int.from_bytes(client.header[1:], byteorder="little")
                     offset += header_needed
@@ -294,6 +340,8 @@ class MeshCoreProxy:
         """Remove a client and close its connection."""
         if addr in self._clients:
             client = self._clients.pop(addr)
+            if self._channel_allocator:
+                self._channel_allocator.remove_client(addr)
             try:
                 client.writer.close()
                 await client.writer.wait_closed()
@@ -322,9 +370,24 @@ class MeshCoreProxy:
                 # Parse frames from the TCP data
                 payloads = self._parse_tcp_frame(client, data)
 
-                # Forward each complete payload to the radio
+                # Enqueue each complete payload for serialized sending
                 for payload in payloads:
-                    await self._send_to_radio(payload)
+                    # Apply channel virtualization if enabled
+                    if self._channel_allocator:
+                        payload = self._channel_allocator.process_outgoing(
+                            addr, payload
+                        )
+                        if payload is None:
+                            logger.debug(
+                                f"SET_CHANNEL from {addr} suppressed (dedup hit)"
+                            )
+                            continue
+
+                    logger.debug(
+                        f"Command enqueued from {addr} "
+                        f"(queue depth: {self._command_queue.qsize()})"
+                    )
+                    await self._command_queue.put(payload)
 
         except asyncio.CancelledError:
             pass
@@ -393,6 +456,7 @@ class MeshCoreProxy:
         logger.info(f"Starting MeshCore Proxy ({conn_type}: {conn_target})...")
 
         await self._start_tcp_server()
+        self._queue_worker_task = asyncio.create_task(self._run_command_queue())
 
         reconnect_delay = 5  # Initial delay in seconds
         max_delay = 300  # 5 minutes
@@ -424,6 +488,26 @@ class MeshCoreProxy:
 
         logger.info("Stopping MeshCore Proxy...")
         self._is_running = False
+
+        # Cancel queue worker
+        if self._queue_worker_task:
+            self._queue_worker_task.cancel()
+            try:
+                await self._queue_worker_task
+            except asyncio.CancelledError:
+                pass
+
+        # Discard remaining queued commands
+        remaining = 0
+        while not self._command_queue.empty():
+            try:
+                self._command_queue.get_nowait()
+                self._command_queue.task_done()
+                remaining += 1
+            except asyncio.QueueEmpty:
+                break
+        if remaining:
+            logger.warning(f"Discarded {remaining} queued commands on shutdown")
 
         # Close all clients
         for addr in list(self._clients.keys()):

@@ -34,6 +34,6 @@ USER meshcore
 # Default port
 EXPOSE 5000
 
-# Default command (override with actual connection args)
+# Run the proxy - configure via environment variables or command args
 ENTRYPOINT ["meshcore-proxy"]
-CMD ["--help"]
+CMD []

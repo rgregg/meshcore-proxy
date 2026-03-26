@@ -2,7 +2,7 @@ import asyncio
 from unittest.mock import patch
 
 import pytest
-from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
+from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy, TCPClient
 
 
 class MockRadio:
@@ -126,6 +126,287 @@ async def test_backoff_delay(mock_serial_connection):
     assert proxy._radio_connected
     assert mock_radio.connect_attempts == 3
     assert duration > 15
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_commands_serialized_through_queue(mock_serial_connection):
+    """
+    Tests that commands from multiple clients are serialized through the queue
+    and arrive at the radio one at a time in FIFO order.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5010,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Enqueue three commands
+    payload_a = b"\x01"  # CMD_APPSTART
+    payload_b = b"\x14"  # CMD_GET_BATTERY
+    payload_c = b"\x05"  # CMD_GET_TIME
+
+    await proxy._command_queue.put(payload_a)
+    await proxy._command_queue.put(payload_b)
+    await proxy._command_queue.put(payload_c)
+
+    # Give the worker time to process
+    await asyncio.sleep(0.5)
+
+    assert mock_radio.send_buffer == [payload_a, payload_b, payload_c]
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_tcp_client_commands_go_through_queue(mock_serial_connection):
+    """
+    Tests that commands received from a TCP client are routed through the
+    command queue rather than sent directly to the radio.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5011,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Connect a TCP client and send a framed command
+    reader, writer = await asyncio.open_connection("127.0.0.1", 5011)
+
+    # Send a framed CMD_APPSTART: 0x3c + 2-byte size (1, little-endian) + payload
+    payload = b"\x01"
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+    writer.write(frame)
+    await writer.drain()
+
+    # Give time for processing
+    await asyncio.sleep(0.5)
+
+    assert mock_radio.send_buffer == [payload]
+
+    writer.close()
+    await writer.wait_closed()
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_commands_dropped_when_radio_disconnected(mock_serial_connection):
+    """
+    Tests that commands enqueued while the radio is disconnected are dropped
+    with a warning rather than causing errors.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5012,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Disconnect the radio and prevent reconnection
+    mock_radio.connect_fails = 999
+    await mock_radio.disconnect()
+    assert not proxy._radio_connected
+
+    # Record send count before enqueuing
+    send_count_before = len(mock_radio.send_buffer)
+
+    # Enqueue a command while disconnected
+    await proxy._command_queue.put(b"\x01")
+
+    # Give the worker time to process
+    await asyncio.sleep(0.5)
+
+    # Command should not appear in send buffer (it was dropped)
+    assert len(mock_radio.send_buffer) == send_count_before
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+def test_frame_payload_uses_server_direction_byte():
+    """
+    Tests that _frame_payload uses 0x3E (server -> client direction byte)
+    per the MeshCore TCP framing protocol.
+    """
+    proxy = MeshCoreProxy(serial_port="/dev/ttyUSB0")
+    payload = b"\x05\x01\x02"
+    framed = proxy._frame_payload(payload)
+
+    assert framed[0:1] == b"\x3e", "Direction byte should be 0x3E (server -> client)"
+    assert framed[1:3] == len(payload).to_bytes(2, byteorder="little"), "Size should be little-endian"
+    assert framed[3:] == payload, "Payload should follow header unchanged"
+
+
+def test_parse_tcp_frame_accepts_valid_header():
+    """
+    Tests that _parse_tcp_frame accepts frames with 0x3C direction byte.
+    """
+    proxy = MeshCoreProxy(serial_port="/dev/ttyUSB0")
+    client = TCPClient(reader=None, writer=None, addr=("127.0.0.1", 9999))
+
+    payload = b"\x01\x02\x03"
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    result = proxy._parse_tcp_frame(client, frame)
+    assert result == [payload]
+
+
+def test_parse_tcp_frame_rejects_invalid_header():
+    """
+    Tests that _parse_tcp_frame discards frames with wrong direction byte.
+    """
+    proxy = MeshCoreProxy(serial_port="/dev/ttyUSB0")
+    client = TCPClient(reader=None, writer=None, addr=("127.0.0.1", 9999))
+
+    payload = b"\x01\x02\x03"
+    # Use 0x3E (server -> client) instead of 0x3C (client -> server)
+    bad_frame = b"\x3e" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    result = proxy._parse_tcp_frame(client, bad_frame)
+    assert result == [], "Frame with wrong direction byte should be discarded"
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_virtualized_channels_rewrite_set_channel(mock_serial_connection):
+    """
+    Tests that with virtualize_channels enabled, SET_CHANNEL commands get
+    rewritten with physical slot indices.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5020,
+        virtualize_channels=True,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Connect TCP client and send SET_CHANNEL
+    reader, writer = await asyncio.open_connection("127.0.0.1", 5020)
+
+    # Build SET_CHANNEL(virtual_idx=5, "TestChannel")
+    from hashlib import sha256
+    name = "TestChannel"
+    name_bytes = name.encode("utf-8")[:32].ljust(32, b"\x00")
+    secret = sha256(name.encode("utf-8")).digest()[:16]
+    payload = b"\x20\x05" + name_bytes + secret
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    writer.write(frame)
+    await writer.drain()
+    await asyncio.sleep(0.5)
+
+    # Radio should receive SET_CHANNEL with a physical index (not necessarily 5)
+    assert len(mock_radio.send_buffer) == 1
+    sent = mock_radio.send_buffer[0]
+    assert sent[0] == 0x20, "Command type preserved"
+    assert sent[2:] == payload[2:], "Config bytes preserved"
+    physical_idx = sent[1]
+    assert 0 <= physical_idx < 40
+
+    writer.close()
+    await writer.wait_closed()
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_virtualized_channels_dedup_suppresses_radio_command(mock_serial_connection):
+    """
+    Tests that duplicate SET_CHANNEL from a second client is suppressed
+    (not sent to radio).
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5021,
+        virtualize_channels=True,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Build the same SET_CHANNEL payload for both clients
+    from hashlib import sha256
+    name = "SharedChannel"
+    name_bytes = name.encode("utf-8")[:32].ljust(32, b"\x00")
+    secret = sha256(name.encode("utf-8")).digest()[:16]
+    payload = b"\x20\x00" + name_bytes + secret
+    frame = b"\x3c" + len(payload).to_bytes(2, byteorder="little") + payload
+
+    # Client A sends SET_CHANNEL
+    reader_a, writer_a = await asyncio.open_connection("127.0.0.1", 5021)
+    writer_a.write(frame)
+    await writer_a.drain()
+    await asyncio.sleep(0.5)
+    assert len(mock_radio.send_buffer) == 1, "First SET_CHANNEL sent to radio"
+
+    # Client B sends identical SET_CHANNEL
+    reader_b, writer_b = await asyncio.open_connection("127.0.0.1", 5021)
+    writer_b.write(frame)
+    await writer_b.drain()
+    await asyncio.sleep(0.5)
+    assert len(mock_radio.send_buffer) == 1, "Dedup: second SET_CHANNEL NOT sent to radio"
+
+    writer_a.close()
+    writer_b.close()
+    await writer_a.wait_closed()
+    await writer_b.wait_closed()
 
     proxy_task.cancel()
     try:
