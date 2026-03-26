@@ -15,6 +15,7 @@ CMD_GET_CHANNEL = 0x1F
 # Response codes with channel indices
 RESP_CHANNEL_INFO = 0x12
 RESP_CHANNEL_MSG_RECV = 0x08
+RESP_CHANNEL_MSG_RECV_V3 = 0x11
 
 
 @dataclass
@@ -151,9 +152,7 @@ class ChannelSlotAllocator:
 
         resp_type = payload[0]
 
-        if resp_type == RESP_CHANNEL_INFO:
-            return self._rewrite_response_channel_idx(client_addr, payload, idx_offset=1)
-        elif resp_type == RESP_CHANNEL_MSG_RECV:
+        if resp_type in (RESP_CHANNEL_INFO, RESP_CHANNEL_MSG_RECV, RESP_CHANNEL_MSG_RECV_V3):
             return self._rewrite_response_channel_idx(client_addr, payload, idx_offset=1)
         else:
             return payload
