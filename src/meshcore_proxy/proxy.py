@@ -140,7 +140,7 @@ class MeshCoreProxy:
         self._is_ble = False
         self._is_running = False
         self._radio_connected = False
-        self._command_queue: asyncio.Queue = asyncio.Queue()
+        self._command_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         self._queue_worker_task: Optional[asyncio.Task] = None
 
     async def _handle_radio_disconnect(self, reason: Optional[str] = None) -> None:
@@ -267,6 +267,8 @@ class MeshCoreProxy:
                     f"(queue depth: {self._command_queue.qsize()})"
                 )
                 await self._send_to_radio(payload)
+            except asyncio.CancelledError:
+                raise
             except Exception as e:
                 logger.error(f"Queue worker error: {e}")
             finally:

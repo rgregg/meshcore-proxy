@@ -239,9 +239,13 @@ async def test_commands_dropped_when_radio_disconnected(mock_serial_connection):
     await asyncio.sleep(1)
     assert proxy._radio_connected
 
-    # Disconnect the radio
+    # Disconnect the radio and prevent reconnection
+    mock_radio.connect_fails = 999
     await mock_radio.disconnect()
     assert not proxy._radio_connected
+
+    # Record send count before enqueuing
+    send_count_before = len(mock_radio.send_buffer)
 
     # Enqueue a command while disconnected
     await proxy._command_queue.put(b"\x01")
@@ -250,8 +254,6 @@ async def test_commands_dropped_when_radio_disconnected(mock_serial_connection):
     await asyncio.sleep(0.5)
 
     # Command should not appear in send buffer (it was dropped)
-    # The radio had no sends after disconnection
-    send_count_before = len(mock_radio.send_buffer)
     assert len(mock_radio.send_buffer) == send_count_before
 
     proxy_task.cancel()
