@@ -24,7 +24,7 @@ Examples:
   meshcore-proxy --ble 12:34:56:78:90:AB
 
   # With event logging
-  meshcore-proxy --serial /dev/ttyUSB0 --log-events
+  meshcore-proxy --serial /dev/ttyUSB0 --log-level debug
 
   # Specify TCP port
   meshcore-proxy --serial /dev/ttyUSB0 --port 5000
@@ -77,26 +77,14 @@ Examples:
         help="BLE pairing PIN (default: 123456) [env: BLE_PIN]",
     )
 
-    # Event logging options (mutually exclusive)
-    # LOG_LEVEL env var: "off", "summary", "verbose"
-    log_group = parser.add_mutually_exclusive_group()
-    log_group.add_argument(
-        "--quiet",
-        action="store_true",
-        default=os.environ.get("LOG_LEVEL", "").lower() == "off",
-        help="Suppress non-error output [env: LOG_LEVEL=off]",
-    )
-    log_group.add_argument(
-        "--log-events",
-        action="store_true",
-        default=os.environ.get("LOG_LEVEL", "").lower() == "summary",
-        help="Log event summaries (type, direction, basic info) [env: LOG_LEVEL=summary]",
-    )
-    log_group.add_argument(
-        "--log-events-verbose",
-        action="store_true",
-        default=os.environ.get("LOG_LEVEL", "").lower() == "verbose",
-        help="Log full decoded event details [env: LOG_LEVEL=verbose]",
+    # Log level: controls both Python logging and event output verbosity
+    # off=errors only, error=errors only, warning=warnings+errors,
+    # info=normal (default), debug=debug logging, verbose=debug + full event details
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("LOG_LEVEL", "info"),
+        choices=["off", "error", "warning", "info", "debug", "verbose"],
+        help="Log verbosity: off, error, warning, info, debug, verbose (default: info) [env: LOG_LEVEL]",
     )
 
     # Output format
@@ -105,14 +93,6 @@ Examples:
         action="store_true",
         default=os.environ.get("LOG_JSON", "").lower() in ("1", "true", "yes"),
         help="Output event logs as JSON (for parsing) [env: LOG_JSON]",
-    )
-
-    # Debug logging
-    parser.add_argument(
-        "--debug",
-        action="store_true",
-        default=os.environ.get("DEBUG", "").lower() in ("1", "true", "yes"),
-        help="Enable debug logging [env: DEBUG]",
     )
 
     # Channel virtualization
@@ -172,23 +152,26 @@ def main() -> int:
     """Main entry point."""
     args = parse_args()
 
-    # Determine event log level
-    if args.quiet:
-        event_log_level = EventLogLevel.OFF
-    elif args.log_events_verbose:
-        event_log_level = EventLogLevel.VERBOSE
-    elif args.log_events:
-        event_log_level = EventLogLevel.SUMMARY
-    else:
-        event_log_level = EventLogLevel.OFF
-
-    # Configure logging
-    if args.quiet:
-        log_level = logging.ERROR
-    elif args.debug:
-        log_level = logging.DEBUG
-    else:
-        log_level = logging.INFO
+    # Map unified log level to Python logging and event verbosity
+    level = args.log_level.lower()
+    log_level_map = {
+        "off": logging.ERROR,
+        "error": logging.ERROR,
+        "warning": logging.WARNING,
+        "info": logging.INFO,
+        "debug": logging.DEBUG,
+        "verbose": logging.DEBUG,
+    }
+    event_level_map = {
+        "off": EventLogLevel.OFF,
+        "error": EventLogLevel.OFF,
+        "warning": EventLogLevel.OFF,
+        "info": EventLogLevel.SUMMARY,
+        "debug": EventLogLevel.SUMMARY,
+        "verbose": EventLogLevel.VERBOSE,
+    }
+    log_level = log_level_map[level]
+    event_log_level = event_level_map[level]
 
     logging.basicConfig(
         level=log_level,

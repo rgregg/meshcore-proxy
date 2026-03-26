@@ -9,9 +9,8 @@
 #   BLE_ADDRESS        - BLE device MAC address
 #   TCP_PORT           - TCP server port (default: 5000)
 #   BLE_PIN            - BLE pairing PIN (default: 123456)
-#   LOG_LEVEL          - Event log level: off, summary, verbose
+#   LOG_LEVEL          - Log verbosity: off, error, warning, info, debug, verbose (default: info)
 #   LOG_JSON           - Output logs as JSON: true/false
-#   DEBUG              - Enable debug logging: true/false
 #   VIRTUALIZE_CHANNELS - Enable channel slot virtualization: true/false
 
 services:
@@ -29,7 +28,6 @@ services:
       - VIRTUALIZE_CHANNELS=${VIRTUALIZE_CHANNELS:-}
       - LOG_LEVEL=${LOG_LEVEL:-}
       - LOG_JSON=${LOG_JSON:-}
-      - DEBUG=${DEBUG:-}
     restart: unless-stopped
 
   # BLE connection profile (requires host network for Bluetooth)
@@ -47,5 +45,4 @@ services:
       - VIRTUALIZE_CHANNELS=${VIRTUALIZE_CHANNELS:-}
       - LOG_LEVEL=${LOG_LEVEL:-}
       - LOG_JSON=${LOG_JSON:-}
-      - DEBUG=${DEBUG:-}
     restart: unless-stopped
