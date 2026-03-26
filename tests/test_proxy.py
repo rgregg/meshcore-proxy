@@ -261,3 +261,17 @@ async def test_commands_dropped_when_radio_disconnected(mock_serial_connection):
         await proxy_task
     except asyncio.CancelledError:
         pass
+
+
+def test_frame_payload_uses_server_direction_byte():
+    """
+    Tests that _frame_payload uses 0x3E (server -> client direction byte)
+    per the MeshCore TCP framing protocol.
+    """
+    proxy = MeshCoreProxy(serial_port="/dev/ttyUSB0")
+    payload = b"\x05\x01\x02"
+    framed = proxy._frame_payload(payload)
+
+    assert framed[0:1] == b"\x3e", "Direction byte should be 0x3E (server -> client)"
+    assert framed[1:3] == len(payload).to_bytes(2, byteorder="little"), "Size should be little-endian"
+    assert framed[3:] == payload, "Payload should follow header unchanged"
