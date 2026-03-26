@@ -200,9 +200,9 @@ class MeshCoreProxy:
                     print(f"{arrow} {type_name} [{len(payload)} bytes]: {payload.hex()}", flush=True)
 
     def _frame_payload(self, payload: bytes) -> bytes:
-        """Frame a payload for TCP transmission (0x3c + 2-byte size + payload)."""
+        """Frame a payload for TCP transmission (0x3e + 2-byte size + payload)."""
         size = len(payload)
-        return b"\x3c" + size.to_bytes(2, byteorder="little") + payload
+        return b"\x3e" + size.to_bytes(2, byteorder="little") + payload
 
     async def _handle_radio_rx(self, payload: bytes) -> None:
         """Handle data received from the radio - forward to all TCP clients."""
