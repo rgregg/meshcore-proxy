@@ -217,3 +217,45 @@ async def test_tcp_client_commands_go_through_queue(mock_serial_connection):
         await proxy_task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.SerialConnection")
+async def test_commands_dropped_when_radio_disconnected(mock_serial_connection):
+    """
+    Tests that commands enqueued while the radio is disconnected are dropped
+    with a warning rather than causing errors.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_serial_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        serial_port="/dev/ttyUSB0",
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5012,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(1)
+    assert proxy._radio_connected
+
+    # Disconnect the radio
+    await mock_radio.disconnect()
+    assert not proxy._radio_connected
+
+    # Enqueue a command while disconnected
+    await proxy._command_queue.put(b"\x01")
+
+    # Give the worker time to process
+    await asyncio.sleep(0.5)
+
+    # Command should not appear in send buffer (it was dropped)
+    # The radio had no sends after disconnection
+    send_count_before = len(mock_radio.send_buffer)
+    assert len(mock_radio.send_buffer) == send_count_before
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
