@@ -104,7 +104,8 @@ jobs:
     needs: tests
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
-    environment: dev-deploy
+    # Require manual approval only for PRs from forks (untrusted code)
+    environment: ${{ github.event.pull_request.head.repo.full_name != github.repository && 'dev-deploy' || '' }}
     permissions:
       contents: read
       packages: write
