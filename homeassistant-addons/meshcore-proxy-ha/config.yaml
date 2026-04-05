@@ -1,0 +1,34 @@
+name: MeshCore Proxy
+version: "0.1.0"
+slug: meshcore_proxy
+description: TCP bridge for a locally-connected MeshCore companion radio (USB serial or BLE).
+url: https://github.com/rgregg/meshcore-proxy
+arch:
+  - aarch64
+  - amd64
+init: false
+startup: services
+boot: auto
+host_network: false
+uart: true
+usb: true
+ports:
+  "5000/tcp": 5000
+ports_description:
+  "5000/tcp": MeshCore TCP proxy
+options:
+  connection_type: serial
+  serial_device: /dev/ttyUSB0
+  baud: 115200
+  ble_address: ""
+  ble_pin: "123456"
+  tcp_port: 5000
+  log_level: info
+schema:
+  connection_type: list(serial|ble)
+  serial_device: device(subsystem=tty)?
+  baud: int(9600,921600)
+  ble_address: str?
+  ble_pin: str?
+  tcp_port: port
+  log_level: list(debug|info|events|events_verbose|json)
