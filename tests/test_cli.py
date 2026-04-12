@@ -3,11 +3,12 @@
 import asyncio
 import os
 import signal
+import sys
 from unittest.mock import patch
 
 import pytest
 
-from meshcore_proxy.cli import run_with_shutdown
+from meshcore_proxy.cli import parse_args, run_with_shutdown
 from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
 
 # Test timing constants
@@ -42,6 +43,64 @@ class MockRadio:
 
     def set_reader(self, reader):
         self.on_receive = reader.handle_rx
+
+
+def test_parse_args_accepts_tcp_endpoint(monkeypatch):
+    """Test that upstream TCP endpoint options are parsed correctly."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "meshcore-proxy",
+            "--tcp",
+            "192.168.1.103:5000",
+        ],
+    )
+
+    args = parse_args()
+
+    assert args.radio_tcp_host == "192.168.1.103"
+    assert args.radio_tcp_port == 5000
+    assert args.serial is None
+    assert args.ble is None
+
+
+def test_parse_args_accepts_tcp_env(monkeypatch):
+    """Test that upstream TCP environment variables satisfy connection selection."""
+    monkeypatch.setenv("RADIO_TCP", "192.168.1.103:5001")
+    monkeypatch.setattr(sys, "argv", ["meshcore-proxy"])
+
+    args = parse_args()
+
+    assert args.radio_tcp_host == "192.168.1.103"
+    assert args.radio_tcp_port == 5001
+
+
+def test_parse_args_accepts_tcp_host_without_port(monkeypatch):
+    """Test that --tcp defaults to port 5000 when no port is provided."""
+    monkeypatch.setattr(sys, "argv", ["meshcore-proxy", "--tcp", "192.168.1.103"])
+
+    args = parse_args()
+
+    assert args.radio_tcp_host == "192.168.1.103"
+    assert args.radio_tcp_port == 5000
+
+
+def test_parse_args_requires_connection_mode(monkeypatch):
+    """Test that one upstream connection mode is required."""
+    for var in (
+        "SERIAL_PORT",
+        "BLE_ADDRESS",
+        "RADIO_TCP",
+        "RADIO_TCP_ADDRESS",
+        "RADIO_TCP_HOST",
+        "RADIO_TCP_PORT",
+    ):
+        monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(sys, "argv", ["meshcore-proxy"])
+
+    with pytest.raises(SystemExit):
+        parse_args()
 
 
 @pytest.mark.asyncio
