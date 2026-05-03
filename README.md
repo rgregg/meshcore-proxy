@@ -1,13 +1,13 @@
 # MeshCore Proxy
 
-A TCP proxy that enables remote access to a locally-connected MeshCore companion radio.
+A TCP proxy that enables remote access to a locally-connected or upstream TCP MeshCore companion radio.
 
 ## Overview
 
-MeshCore Proxy connects to a MeshCore radio via USB Serial or Bluetooth LE and exposes it over TCP, allowing remote clients to interact with the radio as if it were directly connected.
+MeshCore Proxy connects to a MeshCore radio via USB Serial, Bluetooth LE, or an upstream TCP companion endpoint and exposes it over TCP, allowing remote clients to interact with the radio as if it were directly connected.
 
 ```
-┌─────────────────┐     USB/BLE      ┌──────────────────┐
+┌─────────────────┐  USB/BLE/TCP up  ┌──────────────────┐
 │  MeshCore Radio │ ◄──────────────► │  meshcore-proxy  │
 │  (Companion FW) │                  │                  │
 └─────────────────┘                  │  TCP :5000       │
@@ -84,6 +84,16 @@ meshcore-proxy --ble 7921236E-065C-0C7B-C04D-7F60E849DC47
 meshcore-proxy --ble MeshCore-07BA3987
 ```
 
+### Upstream TCP Companion
+
+```bash
+# Keep one exclusive session to the radio's WiFi companion endpoint
+meshcore-proxy --tcp 192.168.1.103:5000
+
+# IPv6 with an explicit port uses brackets
+meshcore-proxy --tcp [2001:db8::1]:5000
+```
+
 ### Connect a Client
 
 Once the proxy is running, connect clients to `localhost:5000`:
@@ -100,6 +110,9 @@ meshcore-proxy [OPTIONS]
 Connection (one required):
   --serial PORT     Serial port path (e.g., /dev/ttyUSB0)
   --ble ADDR        BLE device address (see platform notes below)
+  --tcp HOST[:PORT]
+                    Upstream MeshCore TCP endpoint (e.g., 192.168.1.103:5000
+                    or [2001:db8::1]:5000 for IPv6)
 
 Server options:
   --host ADDR       TCP bind address (default: 0.0.0.0)
@@ -210,6 +223,16 @@ docker run -d \
   --ble 12:34:56:78:90:AB
 ```
 
+### Upstream TCP Companion
+
+```bash
+docker run -d \
+  --name meshcore-proxy \
+  -p 5000:5000 \
+  -e RADIO_TCP=192.168.1.103:5000 \
+  ghcr.io/rgregg/meshcore-proxy:latest
+```
+
 ### Docker Compose
 
 ```bash
@@ -218,6 +241,9 @@ docker compose --profile serial up -d
 
 # BLE (set address in environment)
 BLE_ADDRESS=12:34:56:78:90:AB docker compose --profile ble up -d
+
+# Upstream TCP companion
+RADIO_TCP=192.168.1.103:5000 docker compose --profile tcp up -d
 ```
 
 ### View Logs
@@ -249,6 +275,20 @@ Configure the [MeshCore Home Assistant integration](https://github.com/awolden/m
 
 - **Host:** IP address of machine running the proxy
 - **Port:** 5000 (or your custom port)
+
+### WiFi Companion Multiplexing
+
+If your radio's WiFi companion endpoint only supports one active TCP client,
+have `meshcore-proxy` hold that connection open and point all apps at the proxy:
+
+```text
+Home Assistant ---\
+MeshCore app ------> meshcore-proxy ----> radio-wifi:5000
+meshcore-cli ------/
+```
+
+This makes the proxy the single upstream TCP owner while still allowing
+multiple downstream clients to share the radio.
 
 ### Running as a System Service (Linux)
 
@@ -295,6 +335,13 @@ Use a different port:
 meshcore-proxy --serial /dev/ttyUSB0 --port 5001
 ```
 
+### IPv6 upstream TCP endpoint
+
+When using `--tcp` with an IPv6 literal:
+
+- Use the bare address when using the default upstream port `5000`, for example `--tcp 2001:db8::1`
+- Use brackets when specifying an explicit port, for example `--tcp [2001:db8::1]:5001`
+
 ### BLE connection fails
 
 - Ensure Bluetooth is enabled and the device is in range
@@ -311,7 +358,7 @@ meshcore-proxy --serial /dev/ttyUSB0 --port 5001
 ## Requirements
 
 - Python 3.10+
-- MeshCore companion radio with USB or BLE firmware
+- MeshCore companion radio with USB, BLE, or TCP companion access
 
 ## Development
 

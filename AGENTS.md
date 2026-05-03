@@ -2,11 +2,11 @@
 
 ## Project Overview
 
-This project builds a **TCP proxy** that enables a locally-connected MeshCore companion radio (via USB Serial or BLE) to be accessed by remote clients over a TCP network connection.
+This project builds a **TCP proxy** that enables a MeshCore companion radio connected via USB Serial, BLE, or an upstream TCP companion endpoint to be accessed by remote clients over a TCP network connection.
 
 ### Goals
 
-- Connect to a MeshCore companion radio via USB Serial or Bluetooth Low Energy (BLE)
+- Connect to a MeshCore companion radio via USB Serial, Bluetooth Low Energy (BLE), or an upstream TCP companion endpoint
 - Expose that radio to remote clients via TCP
 - **Decode and log events** - Display human-readable logs of all events sent to/received from the radio
 - Maintain compatibility with existing MeshCore clients:
@@ -42,7 +42,7 @@ Python is the correct choice for this project because:
 ## Architecture
 
 ```
-┌─────────────────┐     USB/BLE      ┌──────────────────┐
+┌─────────────────┐   USB/BLE/TCP    ┌──────────────────┐
 │  MeshCore Radio │ ◄──────────────► │  meshcore-proxy  │
 │  (Companion FW) │                  │                  │
 └─────────────────┘                  │  ┌────────────┐  │
@@ -79,16 +79,17 @@ Key reference files in the submodule:
 
 ### Connection Types
 
-Support two local connection methods:
+Support three radio connection methods:
 
 1. **USB Serial** - `/dev/ttyUSB0` or `/dev/ttyACM0` at 115200 baud
 2. **BLE** - Connect via Bluetooth MAC address (default PIN: `123456`)
+3. **Upstream TCP** - Connect to a MeshCore companion endpoint via `HOST[:PORT]` (default port: `5000`)
 
 ### Configuration
 
 The proxy should accept configuration for:
-- Local connection type (serial or ble)
-- Serial port path or BLE MAC address
+- Local connection type (`serial`, `ble`, or `tcp`)
+- Serial port path, BLE MAC address, or upstream TCP host/port
 - TCP server bind address and port
 - Event logging verbosity (off, summary, verbose/decoded)
 - Optional: logging level, reconnection settings
@@ -139,6 +140,9 @@ meshcore-cli --serial /dev/ttyUSB0
 # Connect via BLE
 meshcore-cli --ble 12:34:56:78:90:AB
 
+# Proxy an upstream TCP companion endpoint
+meshcore-proxy --tcp 192.168.1.103:5000
+
 # Connect via TCP (what our proxy exposes)
 meshcore-cli --tcp 192.168.1.100:5000
 ```
@@ -179,11 +183,15 @@ docker run --device=/dev/ttyUSB0 -p 5000:5000 meshcore-proxy --serial /dev/ttyUS
 
 # Run with BLE (requires host network and bluetooth access)
 docker run --net=host --privileged meshcore-proxy --ble 12:34:56:78:90:AB
+
+# Run with upstream TCP companion mode
+docker run -p 5000:5000 meshcore-proxy --tcp 192.168.1.103:5000
 ```
 
 **Docker considerations:**
 - USB serial requires `--device` flag to pass through the serial port
 - BLE requires `--net=host` and `--privileged` (or specific capabilities) for Bluetooth access
+- Upstream TCP mode only needs network access to the companion endpoint
 - Consider providing a `docker-compose.yml` for easier configuration
 
 ### PyPI Publishing

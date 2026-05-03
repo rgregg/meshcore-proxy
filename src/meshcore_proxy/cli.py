@@ -3,12 +3,69 @@
 import argparse
 import asyncio
 import functools
+import ipaddress
 import logging
 import os
 import signal
 import sys
 
 from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
+
+
+def _parse_tcp_endpoint(value: str) -> tuple[str, int]:
+    """Parse an upstream TCP endpoint in HOST or HOST:PORT form."""
+    value = value.strip()
+    if not value:
+        raise ValueError("TCP endpoint cannot be empty")
+
+    if value.startswith("["):
+        host, separator, port_str = value[1:].partition("]")
+        if not separator:
+            raise ValueError("Invalid bracketed IPv6 endpoint; missing closing ']'")
+        if not host:
+            raise ValueError("TCP endpoint host cannot be empty")
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError as exc:
+            raise ValueError(f"Invalid IPv6 address: {host}") from exc
+        if not port_str:
+            return host, 5000
+        if not port_str.startswith(":"):
+            raise ValueError("Invalid bracketed IPv6 endpoint; expected [HOST]:PORT")
+        port_str = port_str[1:]
+        if not port_str:
+            raise ValueError("TCP endpoint port cannot be empty")
+        try:
+            port = int(port_str)
+        except ValueError as exc:
+            raise ValueError(f"Invalid TCP port: {port_str}") from exc
+        return host, port
+
+    try:
+        ipaddress.IPv6Address(value)
+    except ValueError:
+        pass
+    else:
+        return value, 5000
+
+    if ":" not in value:
+        return value, 5000
+
+    if value.count(":") > 1:
+        raise ValueError("IPv6 endpoints with ports must use bracket syntax: [HOST]:PORT")
+
+    host, port_str = value.rsplit(":", 1)
+    if not host:
+        raise ValueError("TCP endpoint host cannot be empty")
+    if not port_str:
+        raise ValueError("TCP endpoint port cannot be empty")
+
+    try:
+        port = int(port_str)
+    except ValueError as exc:
+        raise ValueError(f"Invalid TCP port: {port_str}") from exc
+
+    return host, port
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,6 +80,12 @@ Examples:
   # Connect via BLE
   meshcore-proxy --ble 12:34:56:78:90:AB
 
+  # Connect via upstream TCP
+  meshcore-proxy --tcp 192.168.1.103:5000
+
+  # Connect via upstream TCP over IPv6
+  meshcore-proxy --tcp [2001:db8::1]:5000
+
   # With event logging
   meshcore-proxy --serial /dev/ttyUSB0 --log-level debug
 
@@ -34,7 +97,13 @@ Examples:
     # Connection type (mutually exclusive)
     # Allow env vars so docker-compose can configure without modifying command
     conn_group = parser.add_mutually_exclusive_group(
-        required=not (os.environ.get("SERIAL_PORT") or os.environ.get("BLE_ADDRESS")),
+        required=not (
+            os.environ.get("SERIAL_PORT")
+            or os.environ.get("BLE_ADDRESS")
+            or os.environ.get("RADIO_TCP")
+            or os.environ.get("RADIO_TCP_ADDRESS")
+            or os.environ.get("RADIO_TCP_HOST")
+        ),
     )
     conn_group.add_argument(
         "--serial",
@@ -47,6 +116,20 @@ Examples:
         metavar="MAC",
         default=os.environ.get("BLE_ADDRESS"),
         help="BLE device MAC address (e.g., 12:34:56:78:90:AB) [env: BLE_ADDRESS]",
+    )
+    conn_group.add_argument(
+        "--tcp",
+        metavar="HOST[:PORT]",
+        default=(
+            os.environ.get("RADIO_TCP")
+            or os.environ.get("RADIO_TCP_ADDRESS")
+            or os.environ.get("RADIO_TCP_HOST")
+        ),
+        help=(
+            "Upstream MeshCore TCP endpoint (e.g., 192.168.1.103 or "
+            "192.168.1.103:5000, or [2001:db8::1]:5000 for IPv6) "
+            "[env: RADIO_TCP or RADIO_TCP_ADDRESS]"
+        ),
     )
 
     # TCP server options
@@ -103,7 +186,21 @@ Examples:
         help="Virtualize channel slots for multi-client isolation [env: VIRTUALIZE_CHANNELS]",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    args.radio_tcp_host = None
+    args.radio_tcp_port = None
+    if args.tcp:
+        tcp_value = args.tcp
+        # Preserve compatibility with older HOST/PORT env vars if only host is set.
+        if ":" not in tcp_value and os.environ.get("RADIO_TCP_PORT"):
+            tcp_value = f"{tcp_value}:{os.environ['RADIO_TCP_PORT']}"
+        try:
+            args.radio_tcp_host, args.radio_tcp_port = _parse_tcp_endpoint(tcp_value)
+        except ValueError as exc:
+            parser.error(str(exc))
+
+    return args
 
 
 async def run_with_shutdown(proxy: MeshCoreProxy) -> None:
@@ -183,6 +280,8 @@ def main() -> int:
     proxy = MeshCoreProxy(
         serial_port=args.serial,
         ble_address=args.ble,
+        radio_tcp_host=args.radio_tcp_host,
+        radio_tcp_port=args.radio_tcp_port,
         baud_rate=args.baud,
         ble_pin=args.ble_pin,
         tcp_host=args.host,

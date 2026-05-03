@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 try:
     from meshcore.serial_cx import SerialConnection
     from meshcore.ble_cx import BLEConnection
+    from meshcore.tcp_cx import TCPConnection
     from meshcore.packets import PacketType
 except ImportError:
     # Fall back to submodule path for development
@@ -27,6 +28,7 @@ except ImportError:
     sys.path.insert(0, os.path.abspath(submodule_path))
     from meshcore.serial_cx import SerialConnection
     from meshcore.ble_cx import BLEConnection
+    from meshcore.tcp_cx import TCPConnection
     from meshcore.packets import PacketType
 
 
@@ -119,6 +121,8 @@ class MeshCoreProxy:
         self,
         serial_port: Optional[str] = None,
         ble_address: Optional[str] = None,
+        radio_tcp_host: Optional[str] = None,
+        radio_tcp_port: int = 5000,
         baud_rate: int = 115200,
         ble_pin: str = "123456",
         tcp_host: str = "0.0.0.0",
@@ -129,6 +133,8 @@ class MeshCoreProxy:
     ):
         self.serial_port = serial_port
         self.ble_address = ble_address
+        self.radio_tcp_host = radio_tcp_host
+        self.radio_tcp_port = radio_tcp_port
         self.baud_rate = baud_rate
         self.ble_pin = ble_pin
         self.tcp_host = tcp_host
@@ -141,7 +147,7 @@ class MeshCoreProxy:
             self._channel_allocator = ChannelSlotAllocator()
             logger.info("Channel slot virtualization enabled")
 
-        self._radio_connection: Optional[SerialConnection | BLEConnection] = None
+        self._radio_connection: Optional[SerialConnection | BLEConnection | TCPConnection] = None
         self._tcp_server: Optional[asyncio.Server] = None
         self._clients: dict[tuple, TCPClient] = {}
         self._is_ble = False
@@ -158,6 +164,16 @@ class MeshCoreProxy:
                 logger.warning("Radio disconnected: %s", reason)
             else:
                 logger.warning("Radio disconnected.")
+
+    def _get_radio_target(self) -> tuple[str, Optional[str]]:
+        """Describe the configured upstream radio transport."""
+        if self.serial_port:
+            return "serial", self.serial_port
+        if self.ble_address:
+            return "BLE", self.ble_address
+        if self.radio_tcp_host:
+            return "tcp", f"{self.radio_tcp_host}:{self.radio_tcp_port}"
+        return "unknown", None
 
     def _log_event(
         self,
@@ -414,6 +430,17 @@ class MeshCoreProxy:
                 pin=self.ble_pin if self.ble_pin else None,
             )
             self._is_ble = True
+        elif self.radio_tcp_host:
+            logger.info(
+                "Connecting to radio via TCP: %s:%s",
+                self.radio_tcp_host,
+                self.radio_tcp_port,
+            )
+            self._radio_connection = TCPConnection(
+                self.radio_tcp_host,
+                self.radio_tcp_port,
+            )
+            self._is_ble = False
         else:
             raise ValueError("No connection method specified")
 
@@ -451,8 +478,7 @@ class MeshCoreProxy:
     async def run(self) -> None:
         """Run the proxy."""
         self._is_running = True
-        conn_type = "serial" if self.serial_port else "BLE"
-        conn_target = self.serial_port or self.ble_address
+        conn_type, conn_target = self._get_radio_target()
         logger.info(f"Starting MeshCore Proxy ({conn_type}: {conn_target})...")
 
         await self._start_tcp_server()

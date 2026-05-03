@@ -3,10 +3,12 @@
 # Usage:
 #   USB Serial: docker compose --profile serial up
 #   BLE:        docker compose --profile ble up
+#   TCP:        docker compose --profile tcp up
 #
 # Environment variables (can be set in .env file or shell):
 #   SERIAL_PORT        - Serial port path (default: /dev/ttyUSB0)
 #   BLE_ADDRESS        - BLE device MAC address
+#   RADIO_TCP          - Upstream MeshCore TCP endpoint (HOST[:PORT])
 #   TCP_PORT           - TCP server port (default: 5000)
 #   BLE_PIN            - BLE pairing PIN (default: 123456)
 #   LOG_LEVEL          - Log verbosity: off, error, warning, info, debug, verbose (default: info)
@@ -41,6 +43,20 @@ services:
     environment:
       - BLE_ADDRESS=${BLE_ADDRESS:-}
       - BLE_PIN=${BLE_PIN:-123456}
+      - TCP_PORT=${TCP_PORT:-5000}
+      - VIRTUALIZE_CHANNELS=${VIRTUALIZE_CHANNELS:-}
+      - LOG_LEVEL=${LOG_LEVEL:-}
+      - LOG_JSON=${LOG_JSON:-}
+    restart: unless-stopped
+
+  # Upstream TCP connection profile
+  meshcore-proxy-tcp:
+    image: ghcr.io/rgregg/meshcore-proxy:latest
+    profiles: ["tcp"]
+    ports:
+      - "${TCP_PORT:-5000}:${TCP_PORT:-5000}"
+    environment:
+      - RADIO_TCP=${RADIO_TCP:-}
       - TCP_PORT=${TCP_PORT:-5000}
       - VIRTUALIZE_CHANNELS=${VIRTUALIZE_CHANNELS:-}
       - LOG_LEVEL=${LOG_LEVEL:-}

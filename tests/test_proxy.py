@@ -69,6 +69,36 @@ async def test_initial_connection_failure_and_reconnect(mock_serial_connection):
 
 
 @pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.TCPConnection")
+async def test_initial_tcp_connection_failure_and_reconnect(mock_tcp_connection):
+    """
+    Tests that the proxy attempts to reconnect if the initial TCP connection fails.
+    """
+    mock_radio = MockRadio(connect_fails=1)
+    mock_tcp_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        radio_tcp_host="192.168.1.103",
+        radio_tcp_port=5000,
+        event_log_level=EventLogLevel.OFF,
+        tcp_port=5004,
+    )
+
+    proxy_task = asyncio.create_task(proxy.run())
+    await asyncio.sleep(6)
+
+    assert proxy._radio_connected
+    assert mock_radio.connect_attempts == 2
+    mock_tcp_connection.assert_called_with("192.168.1.103", 5000)
+
+    proxy_task.cancel()
+    try:
+        await proxy_task
+    except asyncio.CancelledError:
+        pass
+
+
+@pytest.mark.asyncio
 @patch("meshcore_proxy.proxy.SerialConnection")
 async def test_disconnection_and_reconnection(mock_serial_connection):
     """
@@ -98,6 +128,29 @@ async def test_disconnection_and_reconnection(mock_serial_connection):
         await proxy_task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+@patch("meshcore_proxy.proxy.TCPConnection")
+async def test_connect_radio_uses_tcp_connection(mock_tcp_connection):
+    """
+    Tests that TCP upstream selection instantiates the meshcore TCP transport.
+    """
+    mock_radio = MockRadio(connect_fails=0)
+    mock_tcp_connection.return_value = mock_radio
+
+    proxy = MeshCoreProxy(
+        radio_tcp_host="192.168.1.103",
+        radio_tcp_port=5000,
+        event_log_level=EventLogLevel.OFF,
+    )
+
+    await proxy._connect_radio()
+
+    assert proxy._radio_connected
+    assert proxy._radio_connection is mock_radio
+    assert not proxy._is_ble
+    mock_tcp_connection.assert_called_once_with("192.168.1.103", 5000)
 
 
 @pytest.mark.asyncio
