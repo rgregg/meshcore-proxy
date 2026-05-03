@@ -89,6 +89,9 @@ meshcore-proxy --ble MeshCore-07BA3987
 ```bash
 # Keep one exclusive session to the radio's WiFi companion endpoint
 meshcore-proxy --tcp 192.168.1.103:5000
+
+# IPv6 with an explicit port uses brackets
+meshcore-proxy --tcp [2001:db8::1]:5000
 ```
 
 ### Connect a Client
@@ -108,7 +111,8 @@ Connection (one required):
   --serial PORT     Serial port path (e.g., /dev/ttyUSB0)
   --ble ADDR        BLE device address (see platform notes below)
   --tcp HOST[:PORT]
-                    Upstream MeshCore TCP endpoint (e.g., 192.168.1.103:5000)
+                    Upstream MeshCore TCP endpoint (e.g., 192.168.1.103:5000
+                    or [2001:db8::1]:5000 for IPv6)
 
 Server options:
   --host ADDR       TCP bind address (default: 0.0.0.0)
@@ -330,6 +334,13 @@ Use a different port:
 ```bash
 meshcore-proxy --serial /dev/ttyUSB0 --port 5001
 ```
+
+### IPv6 upstream TCP endpoint
+
+When using `--tcp` with an IPv6 literal:
+
+- Use the bare address when using the default upstream port `5000`, for example `--tcp 2001:db8::1`
+- Use brackets when specifying an explicit port, for example `--tcp [2001:db8::1]:5001`
 
 ### BLE connection fails
 

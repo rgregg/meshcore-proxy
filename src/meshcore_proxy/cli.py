@@ -3,6 +3,7 @@
 import argparse
 import asyncio
 import functools
+import ipaddress
 import logging
 import os
 import signal
@@ -17,8 +18,41 @@ def _parse_tcp_endpoint(value: str) -> tuple[str, int]:
     if not value:
         raise ValueError("TCP endpoint cannot be empty")
 
+    if value.startswith("["):
+        host, separator, port_str = value[1:].partition("]")
+        if not separator:
+            raise ValueError("Invalid bracketed IPv6 endpoint; missing closing ']'")
+        if not host:
+            raise ValueError("TCP endpoint host cannot be empty")
+        try:
+            ipaddress.IPv6Address(host)
+        except ValueError as exc:
+            raise ValueError(f"Invalid IPv6 address: {host}") from exc
+        if not port_str:
+            return host, 5000
+        if not port_str.startswith(":"):
+            raise ValueError("Invalid bracketed IPv6 endpoint; expected [HOST]:PORT")
+        port_str = port_str[1:]
+        if not port_str:
+            raise ValueError("TCP endpoint port cannot be empty")
+        try:
+            port = int(port_str)
+        except ValueError as exc:
+            raise ValueError(f"Invalid TCP port: {port_str}") from exc
+        return host, port
+
+    try:
+        ipaddress.IPv6Address(value)
+    except ValueError:
+        pass
+    else:
+        return value, 5000
+
     if ":" not in value:
         return value, 5000
+
+    if value.count(":") > 1:
+        raise ValueError("IPv6 endpoints with ports must use bracket syntax: [HOST]:PORT")
 
     host, port_str = value.rsplit(":", 1)
     if not host:
@@ -48,6 +82,9 @@ Examples:
 
   # Connect via upstream TCP
   meshcore-proxy --tcp 192.168.1.103:5000
+
+  # Connect via upstream TCP over IPv6
+  meshcore-proxy --tcp [2001:db8::1]:5000
 
   # With event logging
   meshcore-proxy --serial /dev/ttyUSB0 --log-level debug
@@ -90,7 +127,8 @@ Examples:
         ),
         help=(
             "Upstream MeshCore TCP endpoint (e.g., 192.168.1.103 or "
-            "192.168.1.103:5000) [env: RADIO_TCP or RADIO_TCP_ADDRESS]"
+            "192.168.1.103:5000, or [2001:db8::1]:5000 for IPv6) "
+            "[env: RADIO_TCP or RADIO_TCP_ADDRESS]"
         ),
     )
 

@@ -86,6 +86,46 @@ def test_parse_args_accepts_tcp_host_without_port(monkeypatch):
     assert args.radio_tcp_port == 5000
 
 
+def test_parse_args_accepts_bracketed_ipv6_with_port(monkeypatch):
+    """Test that bracketed IPv6 endpoints parse correctly with a port."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["meshcore-proxy", "--tcp", "[2001:db8::1]:5001"],
+    )
+
+    args = parse_args()
+
+    assert args.radio_tcp_host == "2001:db8::1"
+    assert args.radio_tcp_port == 5001
+
+
+def test_parse_args_accepts_bare_ipv6_without_port(monkeypatch):
+    """Test that bare IPv6 endpoints default to port 5000."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["meshcore-proxy", "--tcp", "2001:db8::1"],
+    )
+
+    args = parse_args()
+
+    assert args.radio_tcp_host == "2001:db8::1"
+    assert args.radio_tcp_port == 5000
+
+
+def test_parse_args_rejects_malformed_multi_colon_endpoint(monkeypatch):
+    """Test that malformed multi-colon endpoints are rejected."""
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        ["meshcore-proxy", "--tcp", "2001:db8::zzzz:5001"],
+    )
+
+    with pytest.raises(SystemExit):
+        parse_args()
+
+
 def test_parse_args_requires_connection_mode(monkeypatch):
     """Test that one upstream connection mode is required."""
     for var in (
