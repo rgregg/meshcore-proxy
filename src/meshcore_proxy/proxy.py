@@ -121,6 +121,8 @@ class MeshCoreProxy:
         ble_address: Optional[str] = None,
         baud_rate: int = 115200,
         ble_pin: str = "123456",
+        tcp_radio_host: Optional[str] = None,   # new, remote radio
+        tcp_radio_port: Optional[int] = None,
         tcp_host: str = "0.0.0.0",
         tcp_port: int = 5000,
         event_log_level: EventLogLevel = EventLogLevel.OFF,
@@ -131,6 +133,8 @@ class MeshCoreProxy:
         self.ble_address = ble_address
         self.baud_rate = baud_rate
         self.ble_pin = ble_pin
+        self.tcp_radio_host = tcp_radio_host
+        self.tcp_radio_port = tcp_radio_port
         self.tcp_host = tcp_host
         self.tcp_port = tcp_port
         self.event_log_level = event_log_level
@@ -255,11 +259,8 @@ class MeshCoreProxy:
             packet_type = payload[0] if payload else 0
             self._log_event("TO_RADIO", packet_type, payload)
 
-            # BLE sends raw payload, Serial/TCP adds framing
-            if self._is_ble:
-                await self._radio_connection.send(payload)
-            else:
-                await self._radio_connection.send(payload)
+            # Each connection type handles its own framing internally
+            await self._radio_connection.send(payload)
         except Exception as e:
             logger.error(f"Failed to send to radio: {e}")
             await self._handle_radio_disconnect()
@@ -400,7 +401,36 @@ class MeshCoreProxy:
 
     async def _connect_radio(self) -> None:
         """Connect to the MeshCore radio."""
-        if self.serial_port:
+        if self.tcp_radio_host:
+            # Clean up previous MeshCore instance if reconnecting
+            if hasattr(self, "_meshcore") and self._meshcore:
+                self._meshcore.stop()
+                self._meshcore = None
+
+            from meshcore.meshcore import MeshCore
+            logger.info(f"Connecting to radio via TCP: {self.tcp_radio_host}:{self.tcp_radio_port}")
+            meshcore = await MeshCore.create_tcp(
+                self.tcp_radio_host,
+                self.tcp_radio_port or 5000,
+            )
+            if meshcore is None:
+                raise ConnectionError("Failed to connect to radio via TCP")
+            self._radio_connection = meshcore.connection_manager
+            self._meshcore = meshcore
+            self._is_ble = False
+
+            # Chain proxy disconnect handler with MeshCore's internal one.
+            # MeshCore.__init__ already registered
+            # ConnectionManager.handle_disconnect on the raw TCPConnection,
+            # so we wrap it to also notify the proxy.
+            raw_cx = meshcore.connection_manager.connection
+            orig = raw_cx._disconnect_callback
+            async def _on_tcp_disconnect(reason):
+                await self._handle_radio_disconnect(reason)
+                if orig:
+                    await orig(reason)
+            raw_cx.set_disconnect_callback(_on_tcp_disconnect)
+        elif self.serial_port:
             logger.info(f"Connecting to radio via serial: {self.serial_port}")
             self._radio_connection = SerialConnection(
                 self.serial_port,
@@ -427,13 +457,18 @@ class MeshCoreProxy:
 
         self._radio_connection.set_reader(ReaderAdapter(self._handle_radio_rx))
 
-        # Set disconnect callback - both SerialConnection and BLEConnection use set_disconnect_callback
-        self._radio_connection.set_disconnect_callback(self._handle_radio_disconnect)
+        # Set disconnect callback - SerialConnection and BLEConnection invoke it directly.
+        # For TCP mode, the callback was already chained into the raw TCPConnection above.
+        if not self.tcp_radio_host:
+            self._radio_connection.set_disconnect_callback(self._handle_radio_disconnect)
 
-        # Connect
-        result = await self._radio_connection.connect()
-        if result is None:
-            raise ConnectionError("Failed to connect to radio")
+        # Connect (skip if already open via meshcore.connect)
+        if self.tcp_radio_host:
+            result = True  # meshcore.create_tcp already performs connection
+        else:
+            result = await self._radio_connection.connect()
+            if result is None:
+                raise ConnectionError("Failed to connect to radio")
 
         logger.info(f"Connected to radio: {result}")
         self._radio_connected = True
@@ -451,8 +486,15 @@ class MeshCoreProxy:
     async def run(self) -> None:
         """Run the proxy."""
         self._is_running = True
-        conn_type = "serial" if self.serial_port else "BLE"
-        conn_target = self.serial_port or self.ble_address
+        if self.tcp_radio_host:
+            conn_type = "TCP"
+            conn_target = f"{self.tcp_radio_host}:{self.tcp_radio_port}"
+        elif self.serial_port:
+            conn_type = "serial"
+            conn_target = self.serial_port
+        else:
+            conn_type = "BLE"
+            conn_target = self.ble_address
         logger.info(f"Starting MeshCore Proxy ({conn_type}: {conn_target})...")
 
         await self._start_tcp_server()
@@ -521,5 +563,10 @@ class MeshCoreProxy:
         # Disconnect radio
         if self._radio_connection and self._radio_connected:
             await self._radio_connection.disconnect()
-        
+
+        # Clean up MeshCore instance (TCP mode)
+        if hasattr(self, "_meshcore") and self._meshcore:
+            self._meshcore.stop()
+            self._meshcore = None
+
         self._radio_connected = False
