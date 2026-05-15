@@ -12,6 +12,7 @@ from meshcore_proxy.proxy import EventLogLevel, MeshCoreProxy
 
 
 def parse_args() -> argparse.Namespace:
+    import re
     parser = argparse.ArgumentParser(
         description="TCP proxy for MeshCore companion radios",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -23,10 +24,14 @@ Examples:
   # Connect via BLE
   meshcore-proxy --ble 12:34:56:78:90:AB
 
+  # Connect to a remote radio via TCP (default port 5000)
+  meshcore-proxy --tcp 192.168.1.50
+  meshcore-proxy --tcp 192.168.1.50:5100
+
   # With event logging
   meshcore-proxy --serial /dev/ttyUSB0 --log-level debug
 
-  # Specify TCP port
+  # Specify TCP server port for clients
   meshcore-proxy --serial /dev/ttyUSB0 --port 5000
         """,
     )
@@ -34,7 +39,7 @@ Examples:
     # Connection type (mutually exclusive)
     # Allow env vars so docker-compose can configure without modifying command
     conn_group = parser.add_mutually_exclusive_group(
-        required=not (os.environ.get("SERIAL_PORT") or os.environ.get("BLE_ADDRESS")),
+        required=not (os.environ.get("SERIAL_PORT") or os.environ.get("BLE_ADDRESS") or os.environ.get("TCP_RADIO")),
     )
     conn_group.add_argument(
         "--serial",
@@ -47,6 +52,12 @@ Examples:
         metavar="MAC",
         default=os.environ.get("BLE_ADDRESS"),
         help="BLE device MAC address (e.g., 12:34:56:78:90:AB) [env: BLE_ADDRESS]",
+    )
+    conn_group.add_argument(
+        "--tcp",
+        metavar="HOST[:PORT]",
+        default=os.environ.get("TCP_RADIO"),
+        help="Remote MeshCore radio via TCP (host[:port], default port 5000) [env: TCP_RADIO]",
     )
 
     # TCP server options
@@ -103,7 +114,24 @@ Examples:
         help="Virtualize channel slots for multi-client isolation [env: VIRTUALIZE_CHANNELS]",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Parse --tcp (host[:port]) if present
+    args.tcp_host = None
+    args.tcp_port = None
+    if args.tcp:
+        # Accept formats: host, host:port, [IPv6], [IPv6]:port
+        m = re.match(r'^(\[.*\]|[a-zA-Z0-9_.-]+)(?::([0-9]+))?$', args.tcp)
+        if not m:
+            parser.error(f"Invalid --tcp host[:port] format: {args.tcp}")
+        host = m.group(1)
+        if host.startswith('[') and host.endswith(']'):
+            host = host[1:-1]
+        port = int(m.group(2)) if m.group(2) else 5000
+        args.tcp_host = host
+        args.tcp_port = port
+
+    return args
 
 
 async def run_with_shutdown(proxy: MeshCoreProxy) -> None:
@@ -185,6 +213,8 @@ def main() -> int:
         ble_address=args.ble,
         baud_rate=args.baud,
         ble_pin=args.ble_pin,
+        tcp_radio_host=args.tcp_host,
+        tcp_radio_port=args.tcp_port,
         tcp_host=args.host,
         tcp_port=args.port,
         event_log_level=event_log_level,
