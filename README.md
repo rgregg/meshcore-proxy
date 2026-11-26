@@ -112,11 +112,13 @@ BLE options:
   --ble-pin PIN     BLE pairing PIN (default: 123456)
 
 Logging options:
-  --quiet                  Suppress non-error output
-  --log-events             Log event summaries
-  --log-events-verbose     Log full event details with hex payloads
-  --json                   Output event logs as JSON
-  --debug                  Enable debug logging
+  --log-level LEVEL Log verbosity (default: info):
+                      off, error   Errors only, no event logging
+                      warning      Warnings and errors, no event logging
+                      info         Event summaries
+                      debug        Event summaries plus debug logging
+                      verbose      Debug logging plus full event details with hex payloads
+  --json            Output event logs as JSON
 ```
 
 ### BLE Address Format by Platform
@@ -135,8 +137,10 @@ The proxy decodes and displays MeshCore protocol events for debugging and monito
 
 ### Summary Mode
 
+Event summaries are logged at the default `info` level:
+
 ```bash
-meshcore-proxy --serial /dev/ttyUSB0 --log-events
+meshcore-proxy --serial /dev/ttyUSB0 --log-level info
 ```
 
 ```
@@ -152,7 +156,7 @@ meshcore-proxy --serial /dev/ttyUSB0 --log-events
 ### Verbose Mode
 
 ```bash
-meshcore-proxy --serial /dev/ttyUSB0 --log-events-verbose
+meshcore-proxy --serial /dev/ttyUSB0 --log-level verbose
 ```
 
 ```
@@ -165,7 +169,7 @@ meshcore-proxy --serial /dev/ttyUSB0 --log-events-verbose
 ### JSON Mode
 
 ```bash
-meshcore-proxy --serial /dev/ttyUSB0 --log-events --json
+meshcore-proxy --serial /dev/ttyUSB0 --log-level info --json
 ```
 
 ```json
@@ -238,7 +242,7 @@ git submodule update --init --recursive
 
 # Run directly
 PYTHONPATH=src:meshcore_py/src python3 -m meshcore_proxy.cli \
-  --serial /dev/ttyUSB0 --log-events
+  --serial /dev/ttyUSB0 --log-level info
 ```
 
 ## Configuration Examples
@@ -261,7 +265,7 @@ After=network.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/meshcore-proxy --serial /dev/ttyUSB0 --log-events
+ExecStart=/usr/local/bin/meshcore-proxy --serial /dev/ttyUSB0 --log-level info
 Restart=always
 RestartSec=10
 
