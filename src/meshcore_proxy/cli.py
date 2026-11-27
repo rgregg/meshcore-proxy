@@ -118,8 +118,11 @@ async def run_with_shutdown(proxy: MeshCoreProxy) -> None:
         shutdown_event.set()
 
     # Register signal handlers for graceful shutdown
-    for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, functools.partial(signal_handler, sig))
+    try:
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            loop.add_signal_handler(sig, functools.partial(signal_handler, sig))
+    except NotImplementedError:
+        logging.warning("Signal handling is not implemented on this platform.")
 
     # Create the proxy task
     proxy_task = asyncio.create_task(proxy.run())
